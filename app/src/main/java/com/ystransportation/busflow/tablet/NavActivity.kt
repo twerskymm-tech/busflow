@@ -686,7 +686,7 @@ class NavActivity : AppCompatActivity() {
             .put("off_route_events", offRouteEvents)
             .put("state", if (finished) "finished" else trackState()).put("exact_roads", exactRoads)
             .put("next_stop", if (nxt == null) org.json.JSONObject.NULL else org.json.JSONObject().put("number", nxt.stop.number).put("name", nxt.stop.shortName).put("time", nxt.stop.time ?: org.json.JSONObject.NULL))
-            .put("late_minutes", late?.takeIf { it > 0 } ?: 0.0)
+            .put("late_minutes", late?.takeIf { it > 0 && it < 120 } ?: 0.0)
             .put("heading", loc?.bearing ?: org.json.JSONObject.NULL)
             .put("speed_mph", loc?.speed?.let { it * 2.237 } ?: org.json.JSONObject.NULL)
             .put("finished", finished)
