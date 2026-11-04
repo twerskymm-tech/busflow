@@ -1,0 +1,31 @@
+// BusFlow Tablet — the in-bus navigation app for YS Transportation.
+// Built on GitHub (see .github/workflows/android.yml); there is no local build setup.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.4.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:2.3.20"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+        maven {
+            url 'https://api.mapbox.com/downloads/v2/releases/maven'
+            // Only needed if Mapbox asks for a download token (GitHub secret MAPBOX_DOWNLOADS_TOKEN)
+            def downloadsToken = System.getenv('MAPBOX_DOWNLOADS_TOKEN') ?: project.findProperty('MAPBOX_DOWNLOADS_TOKEN')
+            if (downloadsToken) {
+                authentication { basic(BasicAuthentication) }
+                credentials {
+                    username = 'mapbox'
+                    password = downloadsToken
+                }
+            }
+        }
+    }
+}

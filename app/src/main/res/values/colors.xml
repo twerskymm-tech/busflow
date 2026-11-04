@@ -1,0 +1,13 @@
+<resources>
+    <color name="brand">#0D9688</color>
+    <color name="brandDark">#0B7A70</color>
+    <color name="ink">#0F172A</color>
+    <color name="muted">#64748B</color>
+    <color name="line">#E2E8F0</color>
+    <color name="bg">#F8FAFC</color>
+    <color name="warn">#B45309</color>
+    <color name="warnBg">#FEF3C7</color>
+    <color name="okBg">#D1FAE5</color>
+    <color name="ok">#047857</color>
+    <color name="bad">#B91C1C</color>
+</resources>

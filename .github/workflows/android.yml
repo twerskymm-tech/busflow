@@ -1,0 +1,82 @@
+name: Build tablet app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tablet-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '9.6.0'
+
+      - name: Check the Mapbox token is set
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+        run: |
+          if [ -z "$MAPBOX_PUBLIC_TOKEN" ]; then
+            echo "::error::Add the GitHub secret MAPBOX_PUBLIC_TOKEN (your Mapbox pk. token): repo Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+
+      # The app's signing key is made once and kept in the Actions cache (not in the repo),
+      # so each new version installs over the old one.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.busflow-signing
+          key: busflow-signing-v1
+
+      - name: Signing key
+        run: |
+          mkdir -p ~/.busflow-signing
+          if [ ! -f ~/.busflow-signing/busflow.keystore ]; then
+            openssl rand -hex 16 > ~/.busflow-signing/password
+            keytool -genkeypair -keystore ~/.busflow-signing/busflow.keystore -alias busflow -keyalg RSA -keysize 2048 -validity 12000 \
+              -storepass "$(cat ~/.busflow-signing/password)" -keypass "$(cat ~/.busflow-signing/password)" -dname "CN=YS Transportation"
+          fi
+          echo "BUSFLOW_KEYSTORE=$HOME/.busflow-signing/busflow.keystore" >> "$GITHUB_ENV"
+          echo "::add-mask::$(cat ~/.busflow-signing/password)"
+          echo "BUSFLOW_KEYSTORE_PASSWORD=$(cat ~/.busflow-signing/password)" >> "$GITHUB_ENV"
+
+      - name: Build the app
+        env:
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
+        run: gradle :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Name the file
+        run: cp app/build/outputs/apk/release/app-release.apk busflow-tablet.apk
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: busflow-tablet
+          path: busflow-tablet.apk
+
+      - name: Publish as the latest download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="0.2.${{ github.run_number }}"
+          gh release delete tablet-latest --yes --cleanup-tag || true
+          gh release create tablet-latest busflow-tablet.apk \
+            --title "BusFlow Tablet $VERSION" \
+            --notes "Install on the tablet: open https://github.com/${{ github.repository }}/releases/latest/download/busflow-tablet.apk" \
+            --latest

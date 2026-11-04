@@ -1,0 +1,68 @@
+apply plugin: 'com.android.application'
+
+def runNumber = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
+android {
+    namespace 'com.ystransportation.busflow.tablet'
+    compileSdk 37
+
+    defaultConfig {
+        applicationId 'com.ystransportation.busflow.tablet'
+        minSdk 26
+        targetSdk 34
+        versionCode runNumber
+        versionName "0.2.${runNumber}"
+        // Mapbox public token comes from the GitHub secret MAPBOX_PUBLIC_TOKEN (never stored in the repo)
+        resValue "string", "mapbox_access_token", (System.getenv('MAPBOX_PUBLIC_TOKEN') ?: "")
+    }
+
+    // One fixed signing key, so each new version installs over the old one.
+    // The key file lives only on GitHub (Actions cache), never in the repo.
+    def keystorePath = System.getenv('BUSFLOW_KEYSTORE')
+    signingConfigs {
+        busflow {
+            if (keystorePath) {
+                storeFile file(keystorePath)
+                storePassword System.getenv('BUSFLOW_KEYSTORE_PASSWORD')
+                keyAlias 'busflow'
+                keyPassword System.getenv('BUSFLOW_KEYSTORE_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePath ? signingConfigs.busflow : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildFeatures {
+        viewBinding true
+        buildConfig true
+        resValues true
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation "com.mapbox.navigationcore:navigation:3.33.0"
+    implementation "com.mapbox.navigationcore:ui-components:3.33.0"
+
+    implementation "androidx.core:core-ktx:1.19.1"
+    implementation "androidx.appcompat:appcompat:1.8.0"
+    implementation "com.google.android.material:material:1.14.0"
+    implementation "androidx.constraintlayout:constraintlayout:2.2.2"
+    implementation "androidx.cardview:cardview:1.0.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.11.0"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0"
+}
