@@ -57,6 +57,7 @@ class MyDayActivity : AppCompatActivity() {
         b.runs.adapter = adapter
         b.hello.text = "Hi, ${Prefs.driverName(this).substringBefore(" ")}"
         b.signOut.setOnClickListener { confirmSignOut() }
+        b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.swipe.onSwiped = { onSwipe() }
     }
 

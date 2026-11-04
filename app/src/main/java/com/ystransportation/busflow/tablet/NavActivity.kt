@@ -38,6 +38,8 @@ import com.mapbox.maps.extension.style.sources.getSourceAs
 import com.mapbox.maps.plugin.LocationPuck2D
 import com.mapbox.maps.plugin.animation.camera
 import com.mapbox.maps.plugin.locationcomponent.location
+import com.mapbox.maps.plugin.gestures.OnMapClickListener
+import com.mapbox.maps.plugin.gestures.gestures
 import com.mapbox.navigation.base.ExperimentalPreviewMapboxNavigationAPI
 import com.mapbox.navigation.base.extensions.applyDefaultNavigationOptions
 import com.mapbox.navigation.base.extensions.applyLanguageAndVoiceUnitOptions
@@ -115,8 +117,9 @@ class NavActivity : AppCompatActivity() {
 
     private enum class Mode { PREPARING, ON_PATH, REJOINING, SWITCHING, FINISHED }
 
-    private class Seg(val start: Int, val end: Int, var route: NavigationRoute?)
-    private class StopState(val stop: Stop, val target: Point, var pathIdx: Int = 0, var status: Int = 0, var at: String? = null) // 0 to do, 1 done, 2 skipped
+    private class Seg(val start: Int, val end: Int, var route: NavigationRoute?, val detour: Boolean = false)
+    private class Closure(val id: String, val p: Point, val radius: Double)
+    private class StopState(val stop: Stop, val target: Point, var pathIdx: Int = 0, var status: Int = 0, var at: String? = null, var byDriver: Boolean = false) // 0 to do, 1 done, 2 skipped
 
     private lateinit var b: ActivityNavBinding
     private lateinit var plan: Plan
@@ -309,6 +312,7 @@ class NavActivity : AppCompatActivity() {
             routeLineView.initializeLayers(style)
             styleReady = true
             drawPlan()
+            drawClosures()
         }
         b.mapView.location.apply {
             setLocationProvider(navigationLocationProvider)
@@ -318,6 +322,9 @@ class NavActivity : AppCompatActivity() {
         }
 
         b.endButton.setOnClickListener { confirmEnd() }
+        b.skipStop.setOnClickListener { confirmSkip() }
+        b.roadClosed.setOnClickListener { togglePickClosure() }
+        b.mapView.gestures.addOnMapClickListener(OnMapClickListener { point -> if (pickingClosure) { onClosurePicked(point); true } else false })
         b.recenter.setOnClickListener { navigationCamera.requestNavigationCameraToFollowing() }
         b.routeOverview.setOnClickListener { navigationCamera.requestNavigationCameraToOverview() }
         muted = Prefs.muted(this)
@@ -408,6 +415,7 @@ class NavActivity : AppCompatActivity() {
         if (!loadRunPlan()) return
         if (plan.stops.isEmpty()) { fail("This route has no stops on the map."); return }
         exactRoads = plan.hasPath
+        plan.json.optJSONArray("closures")?.let { applyClosures(it, replan = false) }
         if (exactRoads) {
             path = Geo.decode(plan.polyline!!)
             cum = Geo.cumulative(path)
@@ -470,24 +478,187 @@ class NavActivity : AppCompatActivity() {
         replayer.play()
     }
 
-    /** Cuts the planned path into pieces and snaps each to Mapbox roads (turn-by-turn for exactly this line). */
-    private suspend fun buildMatchedSegments(from: Int): Boolean {
-        val idx = Geo.sample(path, cum, from, path.lastIndex)
-        val pieces = mutableListOf<Pair<Int, Int>>()
-        var i = 0
-        while (i < idx.size - 1) {
-            val j = min(i + 99, idx.size - 1)
-            pieces.add(i to j)
-            i = j
+    /**
+     * Cuts the planned path into pieces and snaps each to Mapbox roads (turn-by-turn for exactly this line).
+     * Where a street on the path was reported closed, that stretch becomes a detour around it.
+     * [replan] = re-done while driving (a new closure): on failure keep the old pieces instead of stopping.
+     */
+    private suspend fun buildMatchedSegments(from: Int, replan: Boolean = false): Boolean {
+        val built = mutableListOf<Seg>()
+        val parts = mutableListOf<Triple<Int, Int, Boolean>>()
+        var cur = from
+        for ((a, z) in blockedRanges(from)) {
+            if (a > cur) parts.add(Triple(cur, a, false))
+            parts.add(Triple(max(a, cur), z, true))
+            cur = z
         }
+        if (cur < path.lastIndex) parts.add(Triple(cur, path.lastIndex, false))
+        var n = 0
+        for ((a, z, detour) in parts) {
+            if (detour) {
+                n++
+                if (!replan) status("Preparing detour…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                val r = requestDirections(listOf(path[a], path[z]), null, null)
+                if (r != null) { built.add(Seg(a, z, r, detour = true)); continue }
+                // No way around: keep the planned roads there
+            }
+            val idx = Geo.sample(path, cum, a, z)
+            var i = 0
+            while (i < idx.size - 1) {
+                val j = min(i + 99, idx.size - 1)
+                n++
+                if (!replan) status("Preparing route $n…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                val route = matchOrRoute(idx.subList(i, j + 1).map { path[it] })
+                    ?: run { if (!replan) fail("Could not prepare the route (no internet?). Try again."); return false }
+                built.add(Seg(idx[i], idx[j], route))
+                i = j
+            }
+        }
+        if (built.isEmpty()) return false
         segments.clear()
-        pieces.forEachIndexed { n, (a, z) ->
-            status("Preparing route ${n + 1} of ${pieces.size}…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
-            val pts = idx.subList(a, z + 1).map { path[it] }
-            val route = matchOrRoute(pts) ?: run { fail("Could not prepare the route (no internet?). Try again."); return false }
-            segments.add(Seg(idx[a], idx[z], route))
+        segments.addAll(built)
+        return true
+    }
+
+    // ── Closed streets (reported by any driver): detours for the rest of the morning / afternoon ──
+    private val closures = mutableListOf<Closure>()
+    private var pickingClosure = false
+
+    /** Path stretches that pass a closed street, from 200 m before to 200 m after it. */
+    private fun blockedRanges(from: Int): List<Pair<Int, Int>> {
+        if (path.size < 2) return emptyList()
+        val raw = mutableListOf<Pair<Int, Int>>()
+        for (c in closures) {
+            var first = -1; var last = -1
+            for (i in from until path.size - 1) {
+                if (Geo.segDist(c.p, path[i], path[i + 1]) <= c.radius) { if (first < 0) first = i; last = i + 1 }
+            }
+            if (first < 0) continue
+            var a = first
+            while (a > from && cum[first] - cum[a] < 200) a--
+            raw.add(a to Geo.indexAtDistance(cum, last, 200.0))
         }
-        return segments.isNotEmpty()
+        val merged = mutableListOf<Pair<Int, Int>>()
+        raw.sortedBy { it.first }.forEach { r ->
+            val l = merged.lastOrNull()
+            if (l != null && r.first <= l.second) merged[merged.size - 1] = l.first to max(l.second, r.second) else merged.add(r)
+        }
+        return merged
+    }
+
+    /** Closures from BusFlow (or reported here). A new one on the road ahead re-plans the rest of the route. */
+    private fun applyClosures(list: org.json.JSONArray, replan: Boolean = true) {
+        val fresh = (0 until list.length()).mapNotNull { i ->
+            val c = list.optJSONObject(i) ?: return@mapNotNull null
+            val lat = c.optDouble("lat"); val lng = c.optDouble("lng")
+            if (lat.isNaN() || lng.isNaN()) null else Closure(c.optString("id"), Point.fromLngLat(lng, lat), c.optDouble("radius_m", 35.0))
+        }
+        val before = closures.map { it.id }.toSet()
+        val local = closures.filter { it.id.startsWith("local-") }
+        closures.clear()
+        closures.addAll(fresh)
+        closures.addAll(local.filter { l -> fresh.none { Geo.dist(it.p, l.p) < 30 } })
+        drawClosures()
+        val added = closures.filter { it.id !in before }
+        if (!replan || added.isEmpty()) return
+        val ahead = blockedRanges(progressIdx)
+        val hitsAhead = exactRoads && ahead.any { (a, z) -> added.any { c -> (a..z).any { k -> k < path.size && Geo.dist(c.p, path[k]) <= c.radius + 20 } } }
+        if (!hitsAhead || (mode != Mode.ON_PATH && mode != Mode.REJOINING)) return
+        say("A street ahead is closed. Taking a detour.")
+        lifecycleScope.launch {
+            val from = progressIdx
+            if (buildMatchedSegments(from, replan = true)) startSegment(0)
+        }
+    }
+
+    private fun togglePickClosure() {
+        pickingClosure = !pickingClosure
+        if (pickingClosure) {
+            status("Tap the blocked corner on the map", Color.parseColor("#B91C1C"), Color.parseColor("#FEE2E2"))
+            b.roadClosed.text = "Cancel"
+            navigationCamera.requestNavigationCameraToOverview()
+        } else {
+            b.roadClosed.text = "Road closed"
+            showOnPathStatus()
+        }
+    }
+
+    private fun onClosurePicked(point: Point) {
+        pickingClosure = false
+        b.roadClosed.text = "Road closed"
+        val reasons = arrayOf("Construction", "Accident", "Police", "Flooding / tree down", "Other")
+        AlertDialog.Builder(this)
+            .setTitle("Street closed here?")
+            .setItems(reasons) { _, i -> reportClosure(point, reasons[i]) }
+            .setNegativeButton("Cancel") { _, _ -> showOnPathStatus() }
+            .show()
+    }
+
+    private fun reportClosure(point: Point, note: String) {
+        showOnPathStatus()
+        if (!tracking) {
+            // Practice / no driver signed in: only on this tablet, to try it out
+            val arr = org.json.JSONArray()
+            closures.forEach { arr.put(org.json.JSONObject().put("id", it.id).put("lat", it.p.latitude()).put("lng", it.p.longitude()).put("radius_m", it.radius)) }
+            arr.put(org.json.JSONObject().put("id", "local-${System.currentTimeMillis()}").put("lat", point.latitude()).put("lng", point.longitude()).put("radius_m", 35.0))
+            applyClosures(arr)
+            say("Street closed. Practice only, not sent to the office.")
+            return
+        }
+        lifecycleScope.launch {
+            try {
+                val res = Api.call(this@NavActivity, org.json.JSONObject().put("action", "report_closure")
+                    .put("lat", point.latitude()).put("lng", point.longitude()).put("note", note).put("route_code", plan.code))
+                say("Thanks. The office knows, and every route will go around it.")
+                res.optJSONArray("closures")?.let { applyClosures(it) }
+            } catch (e: ApiError) {
+                android.widget.Toast.makeText(this@NavActivity, e.message ?: "Could not send", android.widget.Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun drawClosures() {
+        if (!styleReady) return
+        val style = b.mapView.mapboxMap.style ?: return
+        style.getSourceAs<GeoJsonSource>("bf-closed")?.featureCollection(FeatureCollection.fromFeatures(closures.map { Feature.fromGeometry(it.p) }), "")
+    }
+
+    // ── Driver skips a stop: straight on to the next one; the office sees it as skipped ──
+    private fun confirmSkip() {
+        val s0 = stops.getOrNull(nextStop) ?: return
+        if (mode != Mode.ON_PATH && mode != Mode.REJOINING) return
+        AlertDialog.Builder(this)
+            .setTitle("Skip stop ${s0.stop.number}?")
+            .setMessage("${s0.stop.shortName}\nThe office will see it as skipped.")
+            .setPositiveButton("Skip it") { _, _ -> skipStop() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun skipStop() {
+        val s0 = stops.getOrNull(nextStop) ?: return
+        s0.status = 2; s0.at = nowIso(); s0.byDriver = true
+        nextStop++
+        drawStops()
+        sendSoon()
+        val loc = lastLocation ?: return
+        val here = Point.fromLngLat(loc.longitude, loc.latitude)
+        val next = stops.getOrNull(nextStop)
+        // Where to pick the planned path up again: the next stop (or just past the skipped one if it was the last)
+        val target = next?.pathIdx ?: Geo.indexAtDistance(cum, s0.pathIdx, 80.0)
+        say(if (next != null) "Skipping stop ${s0.stop.number}. Going to stop ${next.stop.number}, ${next.stop.shortName}." else "Skipping the last stop.")
+        lastRejoinAt = SystemClock.elapsedRealtime()
+        rejoinFrom = target
+        rejoinTo = target
+        mode = Mode.REJOINING
+        goingToStart = false
+        status("Going to the next stop", Color.parseColor("#1D4ED8"), Color.parseColor("#DBEAFE"))
+        lifecycleScope.launch {
+            val route = requestDirections(listOf(here, path[target.coerceIn(0, path.lastIndex)]), null, lastLocation?.bearing)
+            if (mode != Mode.REJOINING) return@launch
+            if (route != null) mapboxNavigation.setNavigationRoutes(listOf(route)) else resumeFrom(target)
+        }
+        updatePanel(here)
     }
 
     /** No approved path: plain directions yard/here → stop 1 → stop 2 … (25 points per request). */
@@ -544,7 +715,10 @@ class NavActivity : AppCompatActivity() {
         segIndex = k
         mode = Mode.ON_PATH
         mapboxNavigation.setNavigationRoutes(listOf(route))
-        showOnPathStatus()
+        if (seg.detour) {
+            status("Detour around a closed street", Color.parseColor("#B91C1C"), Color.parseColor("#FEE2E2"))
+            say("Street closed ahead. Follow the detour.")
+        } else showOnPathStatus()
     }
 
     private fun onRouteEnd() {
@@ -605,7 +779,7 @@ class NavActivity : AppCompatActivity() {
         // A point every 2 s while moving, every 20 s while standing
         if (now - lastPointAt < 2000 || (moved < 10 && now - lastPointAt < 20000)) return
         lastPointAt = now; lastPoint = p
-        if (pendingPoints.length() < 3000) pendingPoints.put(org.json.JSONArray().put(loc.latitude).put(loc.longitude).put(now / 1000))
+        if (pendingPoints.length() < 3000) pendingPoints.put(org.json.JSONArray().put(loc.latitude).put(loc.longitude).put(now / 1000).put(loc.speed?.let { it * 2.237 } ?: -1.0))
     }
 
     private fun startTracking() {
@@ -666,7 +840,7 @@ class NavActivity : AppCompatActivity() {
         val st = org.json.JSONArray()
         stops.filter { it.status != 0 }.forEach { s ->
             st.put(org.json.JSONObject().put("id", s.stop.id).put("number", s.stop.number).put("name", s.stop.shortName)
-                .put("time", s.stop.time ?: org.json.JSONObject.NULL).put("status", if (s.status == 1) "done" else "skipped").put("at", s.at ?: org.json.JSONObject.NULL))
+                .put("time", s.stop.time ?: org.json.JSONObject.NULL).put("status", if (s.status == 1) "done" else "skipped").put("at", s.at ?: org.json.JSONObject.NULL).put("by_driver", s.byDriver))
         }
         val nxt = stops.getOrNull(nextStop)
         var late: Double? = null
@@ -699,7 +873,8 @@ class NavActivity : AppCompatActivity() {
         val body = trackBody(finished)
         val sent = body.getJSONArray("points").length()
         try {
-            Api.call(this, org.json.JSONObject(body.toString()))
+            val res = Api.call(this, org.json.JSONObject(body.toString()))
+            res.optJSONArray("closures")?.let { applyClosures(it) }
             // Drop what went through (new points may have come in meanwhile)
             val rest = org.json.JSONArray()
             for (i in sent until pendingPoints.length()) rest.put(pendingPoints.get(i))
@@ -818,7 +993,9 @@ class NavActivity : AppCompatActivity() {
         lastRejoinAt = SystemClock.elapsedRealtime()
         val (near, _) = Geo.nearestInWindow(path, cum, here, from, 50.0, 3000.0)
         // Join a little ahead, so the bus doesn't have to turn around
-        val join = Geo.indexAtDistance(cum, near, 150.0)
+        var join = Geo.indexAtDistance(cum, near, 150.0)
+        // Never back into a closed street: join after it
+        blockedRanges(max(0, near - 1)).firstOrNull { join in it.first..it.second }?.let { join = it.second }
         val then = Geo.indexAtDistance(cum, join, 250.0)
         rejoinFrom = join
         rejoinTo = then
@@ -893,13 +1070,22 @@ class NavActivity : AppCompatActivity() {
     }
 
     /** Directions through [points]; [waypointIdx] = which points are real stops (others are pass-through). */
-    private suspend fun requestDirections(points: List<Point>, waypointIdx: List<Int>?, originBearing: Double?): NavigationRoute? =
+    private suspend fun requestDirections(points: List<Point>, waypointIdx: List<Int>?, originBearing: Double?): NavigationRoute? {
+        // Around closed streets when possible; if no way around exists, the normal way
+        if (closures.isNotEmpty()) requestDirectionsRaw(points, waypointIdx, originBearing, true)?.let { return it }
+        return requestDirectionsRaw(points, waypointIdx, originBearing, false)
+    }
+
+    private suspend fun requestDirectionsRaw(points: List<Point>, waypointIdx: List<Int>?, originBearing: Double?, avoidClosed: Boolean): NavigationRoute? =
         suspendCancellableCoroutine { cont ->
             val builder = RouteOptions.builder()
                 .applyDefaultNavigationOptions()
                 .applyLanguageAndVoiceUnitOptions(this)
                 .coordinatesList(points)
                 .alternatives(false)
+            if (avoidClosed && closures.isNotEmpty()) {
+                builder.exclude(closures.take(50).joinToString(",") { String.format(Locale.US, "point(%.6f %.6f)", it.p.longitude(), it.p.latitude()) })
+            }
             if (waypointIdx != null) builder.waypointIndicesList(waypointIdx)
             if (originBearing != null) {
                 val bearings = ArrayList<Bearing?>()
@@ -926,6 +1112,21 @@ class NavActivity : AppCompatActivity() {
             lineCap(LineCap.ROUND)
             lineJoin(LineJoin.ROUND)
         }, "road-label-navigation")
+        style.addSource(geoJsonSource("bf-closed"))
+        style.addLayer(circleLayer("bf-closed-c", "bf-closed") {
+            circleColor(Color.parseColor("#DC2626"))
+            circleRadius(14.0)
+            circleStrokeColor(Color.WHITE)
+            circleStrokeWidth(3.0)
+        })
+        style.addLayer(symbolLayer("bf-closed-t", "bf-closed") {
+            textField("✕")
+            textSize(14.0)
+            textColor(Color.WHITE)
+            textAllowOverlap(true)
+            textIgnorePlacement(true)
+            textFont(listOf("DIN Pro Bold", "Arial Unicode MS Bold"))
+        })
         style.addSource(geoJsonSource("bf-stops-todo"))
         style.addSource(geoJsonSource("bf-stops-done"))
         style.addLayer(circleLayer("bf-done-c", "bf-stops-done") {

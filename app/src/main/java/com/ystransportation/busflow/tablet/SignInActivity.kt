@@ -45,6 +45,7 @@ class SignInActivity : AppCompatActivity() {
             override fun afterTextChanged(s: Editable?) { render() }
         })
         b.practice.setOnClickListener { startActivity(Intent(this, RoutesActivity::class.java)) }
+        b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.titleBox.setOnLongClickListener { startActivity(Intent(this, RoutesActivity::class.java)); true }
         b.busTitle.text = Prefs.tabletName(this)
         askPermissions()

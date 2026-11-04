@@ -38,6 +38,16 @@
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/updateApp"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Update app"
+            android:textAllCaps="false"
+            android:textColor="#CBD5E1"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/signOut"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"

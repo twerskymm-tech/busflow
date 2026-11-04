@@ -65,9 +65,17 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:padding="14dp">
+            android:paddingStart="14dp"
+            android:paddingTop="14dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="6dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -118,6 +126,39 @@
                 android:text="End"
                 android:textAllCaps="false"
                 android:textSize="18sp" />
+        </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/driverActions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/skipStop"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_weight="1"
+                    android:text="Skip stop"
+                    android:textAllCaps="false"
+                    android:textSize="16sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/roadClosed"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="0dp"
+                    android:layout_height="56dp"
+                    android:layout_weight="1"
+                    android:text="Road closed"
+                    android:textAllCaps="false"
+                    android:textColor="@color/bad"
+                    android:textSize="16sp" />
+            </LinearLayout>
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 </androidx.constraintlayout.widget.ConstraintLayout>

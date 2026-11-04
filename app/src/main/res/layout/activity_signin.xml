@@ -78,13 +78,28 @@
         android:divider="@color/line"
         android:dividerHeight="1dp" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/practice"
-        style="@style/Widget.MaterialComponents.Button.TextButton"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:text="Practice / all routes (no sign-in)"
-        android:textAllCaps="false"
-        android:textColor="@color/muted" />
+        android:gravity="center"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/practice"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Practice / all routes"
+            android:textAllCaps="false"
+            android:textColor="@color/muted" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/updateApp"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Update app"
+            android:textAllCaps="false"
+            android:textColor="@color/brand" />
+    </LinearLayout>
 </LinearLayout>

@@ -14,6 +14,12 @@ android {
         versionName "0.4.${runNumber}"
         // Mapbox public token comes from the GitHub secret MAPBOX_PUBLIC_TOKEN (never stored in the repo)
         resValue "string", "mapbox_access_token", (System.getenv('MAPBOX_PUBLIC_TOKEN') ?: "")
+        // Tablets and phones are 64-bit ARM: leaving out the other chips makes the download much smaller
+        ndk { abiFilters 'arm64-v8a' }
+    }
+
+    packaging {
+        jniLibs { useLegacyPackaging true }
     }
 
     // One fixed signing key, so each new version installs over the old one.
