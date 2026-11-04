@@ -33,8 +33,10 @@ jobs:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
         run: |
           if [ -z "$MAPBOX_PUBLIC_TOKEN" ]; then
-            echo "::error::Add the GitHub secret MAPBOX_PUBLIC_TOKEN (your Mapbox pk. token): repo Settings > Secrets and variables > Actions"
-            exit 1
+            echo "::warning::Add the GitHub secret MAPBOX_PUBLIC_TOKEN (your Mapbox pk. token): repo Settings > Secrets and variables > Actions. Building only to check the code; nothing will be published."
+            echo "HAS_TOKEN=false" >> "$GITHUB_ENV"
+          else
+            echo "HAS_TOKEN=true" >> "$GITHUB_ENV"
           fi
 
       # The app's signing key is made once and kept in the Actions cache (not in the repo),
@@ -71,6 +73,7 @@ jobs:
           path: busflow-tablet.apk
 
       - name: Publish as the latest download
+        if: env.HAS_TOKEN == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
