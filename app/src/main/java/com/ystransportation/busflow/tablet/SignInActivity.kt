@@ -3,32 +3,30 @@ package com.ystransportation.busflow.tablet
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
-import android.text.Editable
-import android.text.InputFilter
-import android.text.InputType
-import android.text.TextWatcher
-import android.view.Gravity
 import android.view.View
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
+import android.widget.GridLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButton
 import com.ystransportation.busflow.tablet.databinding.ActivitySigninBinding
 import kotlinx.coroutines.launch
-import org.json.JSONObject
 
-/** Home screen of a bus tablet: the driver taps his name and types his PIN (last 4 digits of his phone). */
+/**
+ * Home screen of a bus tablet. No names are shown: the driver types his driver code
+ * (from BusFlow, = his Employee ID) and his PIN (last 4 digits of his phone).
+ */
 class SignInActivity : AppCompatActivity() {
     private lateinit var b: ActivitySigninBinding
-    private lateinit var adapter: TwoLineAdapter
-    private var drivers: List<JSONObject> = emptyList()
-    private var shown: List<JSONObject> = emptyList()
+    private var code = StringBuilder()
+    private var pin = StringBuilder()
+    private var onPin = false
+    private var busy = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,20 +34,91 @@ class SignInActivity : AppCompatActivity() {
         if (Prefs.session(this) != null) { openDay(); return }
         b = ActivitySigninBinding.inflate(layoutInflater)
         setContentView(b.root)
-        adapter = TwoLineAdapter(this)
-        b.list.adapter = adapter
-        b.list.setOnItemClickListener { _, _, pos, _ -> shown.getOrNull(pos)?.let { askPin(it) } }
-        b.search.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) { render() }
-        })
+        // An older version kept a list of driver names on the tablet: remove it
+        runCatching { java.io.File(filesDir, "home.json").delete() }
         b.practice.setOnClickListener { startActivity(Intent(this, RoutesActivity::class.java)) }
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.titleBox.setOnLongClickListener { startActivity(Intent(this, RoutesActivity::class.java)); true }
+        b.codeBox.setOnClickListener { onPin = false; render() }
+        b.pinBox.setOnClickListener { if (code.isNotEmpty()) { onPin = true; render() } }
         b.busTitle.text = Prefs.tabletName(this)
+        buildPad()
+        render()
         askPermissions()
         load()
+    }
+
+    private fun buildPad() {
+        val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "OK")
+        val size = (92 * resources.displayMetrics.density).toInt()
+        keys.forEach { k ->
+            val btn = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                text = k
+                textSize = if (k == "OK") 22f else 28f
+                isAllCaps = false
+                insetTop = 0; insetBottom = 0
+                if (k == "OK") { setBackgroundColor(ContextCompat.getColor(this@SignInActivity, R.color.brand)); setTextColor(Color.WHITE) }
+                setOnClickListener { press(k) }
+            }
+            b.pad.addView(btn, GridLayout.LayoutParams().apply { width = size; height = size; setMargins(8, 8, 8, 8) })
+        }
+    }
+
+    private fun press(k: String) {
+        if (busy) return
+        val f = if (onPin) pin else code
+        when (k) {
+            "⌫" -> if (f.isNotEmpty()) f.deleteCharAt(f.length - 1) else if (onPin) onPin = false
+            "OK" -> if (!onPin) { if (code.isNotEmpty()) onPin = true } else submit()
+            else -> {
+                if (onPin) { if (pin.length < 4) pin.append(k) } else if (code.length < 8) code.append(k)
+            }
+        }
+        render()
+        if (onPin && pin.length == 4) submit()
+    }
+
+    private fun render() {
+        b.codeText.text = code.toString()
+        b.pinText.text = "•".repeat(pin.length)
+        val brand = ContextCompat.getColor(this, R.color.brand)
+        val line = ContextCompat.getColor(this, R.color.line)
+        fun box(active: Boolean) = GradientDrawable().apply {
+            cornerRadius = 14 * resources.displayMetrics.density
+            setColor(Color.WHITE)
+            setStroke(((if (active) 3 else 2) * resources.displayMetrics.density).toInt(), if (active) brand else line)
+        }
+        b.codeBox.background = box(!onPin)
+        b.pinBox.background = box(onPin)
+    }
+
+    private fun showMsg(text: String, bad: Boolean) {
+        b.hint.text = text
+        b.hint.setTextColor(ContextCompat.getColor(this, if (bad) R.color.bad else R.color.muted))
+    }
+
+    private fun submit() {
+        if (busy || code.isEmpty() || pin.length < 4) return
+        busy = true
+        b.progress.visibility = View.VISIBLE
+        showMsg("Signing in…", false)
+        lifecycleScope.launch {
+            try {
+                val j = Api.login(this@SignInActivity, code.toString(), pin.toString())
+                val drv = j.optJSONObject("driver") ?: org.json.JSONObject()
+                Prefs.setSession(this@SignInActivity, j.getString("session"), drv.optString("id"), drv.optString("name"))
+                openDay()
+            } catch (e: ApiError) {
+                if (e.unpaired) { Prefs.unpair(this@SignInActivity); startActivity(Intent(this@SignInActivity, PairActivity::class.java)); finish(); return@launch }
+                showMsg(if (e.offline) "No internet. Try again in a moment." else (e.message ?: "Could not sign in"), true)
+                pin.clear()
+                if (!e.offline) { code.clear(); onPin = false }
+                render()
+            } finally {
+                busy = false
+                b.progress.visibility = View.GONE
+            }
+        }
     }
 
     private fun askPermissions() {
@@ -59,8 +128,8 @@ class SignInActivity : AppCompatActivity() {
         if (missing.isNotEmpty()) ActivityCompat.requestPermissions(this, missing.toTypedArray(), 1)
     }
 
+    /** Bus name and warnings (no driver list). */
     private fun load() {
-        b.progress.visibility = View.VISIBLE
         lifecycleScope.launch {
             try {
                 Api.flushQueue(this@SignInActivity)
@@ -68,87 +137,16 @@ class SignInActivity : AppCompatActivity() {
                 val bus = j.optJSONObject("bus")
                 b.busTitle.text = if (bus != null) "Bus ${bus.optString("fleet_number")}" else j.optString("tablet").ifEmpty { Prefs.tabletName(this@SignInActivity) }
                 val warn = when {
-                    cached -> "No signal — using the list saved on this tablet."
+                    cached -> "No signal right now. You need internet to sign in."
                     bus == null -> "This tablet isn't set to a bus yet. In BusFlow: Route Paths → Tablets → pick the bus."
                     else -> null
                 }
                 b.warning.text = warn ?: ""
                 b.warning.visibility = if (warn == null) View.GONE else View.VISIBLE
-                val arr = j.optJSONArray("drivers")
-                drivers = if (arr == null) emptyList() else (0 until arr.length()).map { arr.getJSONObject(it) }
-                render()
             } catch (e: ApiError) {
-                if (e.unpaired) { Prefs.unpair(this@SignInActivity); startActivity(Intent(this@SignInActivity, PairActivity::class.java)); finish(); return@launch }
-                b.message.text = e.message
-                b.message.visibility = View.VISIBLE
-            } finally {
-                b.progress.visibility = View.GONE
+                if (e.unpaired) { Prefs.unpair(this@SignInActivity); startActivity(Intent(this@SignInActivity, PairActivity::class.java)); finish() }
             }
         }
-    }
-
-    private fun render() {
-        val q = b.search.text.toString().trim().lowercase()
-        shown = drivers.filter { q.isEmpty() || it.optString("name").lowercase().contains(q) }
-        adapter.rows = shown.map { d ->
-            Row(
-                line1 = d.optString("name"),
-                line2 = if (d.optBoolean("regular")) "Regular driver of this bus" else "",
-                tag = if (!d.optBoolean("has_pin")) "No phone on file" else null,
-                tagColor = ContextCompat.getColor(this, R.color.warn), tagBg = ContextCompat.getColor(this, R.color.warnBg),
-            )
-        }
-    }
-
-    private fun askPin(d: JSONObject) {
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            filters = arrayOf(InputFilter.LengthFilter(4))
-            textSize = 34f
-            gravity = Gravity.CENTER
-            letterSpacing = 0.5f
-            hint = "• • • •"
-        }
-        val err = TextView(this).apply { setTextColor(ContextCompat.getColor(this@SignInActivity, R.color.bad)); textSize = 15f; gravity = Gravity.CENTER }
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(64, 24, 64, 0)
-            addView(TextView(this@SignInActivity).apply { text = "Last 4 digits of your phone number"; textSize = 15f; gravity = Gravity.CENTER })
-            addView(input)
-            addView(err)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(d.optString("name"))
-            .setView(box)
-            .setNegativeButton("Cancel", null)
-            .create()
-        var busy = false
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                if (busy || s == null || s.length < 4) return
-                busy = true
-                err.text = "Signing in…"
-                lifecycleScope.launch {
-                    try {
-                        val j = Api.login(this@SignInActivity, d.optString("id"), s.toString())
-                        val drv = j.optJSONObject("driver") ?: JSONObject()
-                        Prefs.setSession(this@SignInActivity, j.getString("session"), drv.optString("id"), drv.optString("name"))
-                        dialog.dismiss()
-                        openDay()
-                    } catch (e: ApiError) {
-                        err.text = e.message
-                        input.setText("")
-                    } finally {
-                        busy = false
-                    }
-                }
-            }
-        })
-        dialog.show()
-        input.requestFocus()
-        dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
     }
 
     private fun openDay() {

@@ -116,8 +116,8 @@ object Api {
         call(ctx, JSONObject().put("action", "home"))
     }
 
-    suspend fun login(ctx: Context, driverId: String, pin: String): JSONObject =
-        call(ctx, JSONObject().put("action", "login").put("driver_id", driverId).put("pin", pin))
+    suspend fun login(ctx: Context, code: String, pin: String): JSONObject =
+        call(ctx, JSONObject().put("action", "login").put("code", code).put("pin", pin))
 
     suspend fun logout(ctx: Context) {
         try { call(ctx, JSONObject().put("action", "logout")) } catch (e: ApiError) { /* signed out on the tablet anyway */ }
