@@ -156,6 +156,26 @@ object Api {
         return true
     }
 
+    /** A trip's last report that couldn't be sent (no signal): kept on the tablet. */
+    suspend fun saveTrack(ctx: Context, body: JSONObject) = withContext(Dispatchers.IO) {
+        val f = File(ctx.filesDir, "track_queue.json")
+        val q = try { JSONArray(f.readText()) } catch (e: Exception) { JSONArray() }
+        if (q.length() < 50) q.put(body)
+        f.writeText(q.toString())
+    }
+
+    /** Sends saved trip reports once there is signal. */
+    suspend fun flushTracks(ctx: Context) {
+        val f = File(ctx.filesDir, "track_queue.json")
+        val q = withContext(Dispatchers.IO) { try { JSONArray(f.readText()) } catch (e: Exception) { JSONArray() } }
+        if (q.length() == 0) return
+        val left = JSONArray()
+        for (i in 0 until q.length()) {
+            try { call(ctx, q.getJSONObject(i)) } catch (e: ApiError) { if (e.offline) left.put(q.get(i)) }
+        }
+        withContext(Dispatchers.IO) { f.writeText(left.toString()) }
+    }
+
     private fun drop(ctx: Context) {
         val q = Prefs.queue(ctx)
         val rest = JSONArray()

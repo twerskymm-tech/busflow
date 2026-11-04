@@ -116,7 +116,7 @@ class NavActivity : AppCompatActivity() {
     private enum class Mode { PREPARING, ON_PATH, REJOINING, SWITCHING, FINISHED }
 
     private class Seg(val start: Int, val end: Int, var route: NavigationRoute?)
-    private class StopState(val stop: Stop, val target: Point, var pathIdx: Int = 0, var status: Int = 0) // 0 to do, 1 done, 2 skipped
+    private class StopState(val stop: Stop, val target: Point, var pathIdx: Int = 0, var status: Int = 0, var at: String? = null) // 0 to do, 1 done, 2 skipped
 
     private lateinit var b: ActivityNavBinding
     private lateinit var plan: Plan
@@ -178,6 +178,7 @@ class NavActivity : AppCompatActivity() {
             val p = Point.fromLngLat(loc.longitude, loc.latitude)
             if (!firstLocation.isCompleted) firstLocation.complete(p)
             onPosition(p)
+            trackPoint(loc)
         }
     }
 
@@ -250,7 +251,7 @@ class NavActivity : AppCompatActivity() {
                 // We bring the driver back to OUR path ourselves
                 mapboxNavigation.setRerouteEnabled(false)
                 if (simulate) mapboxNavigation.startReplayTripSession() else mapboxNavigation.startTripSession()
-                if (!started) { started = true; lifecycleScope.launch { prepare() } }
+                if (!started) { started = true; lifecycleScope.launch { prepare() }; startTracking() }
             }
 
             override fun onDetached(mapboxNavigation: MapboxNavigation) {
@@ -584,8 +585,108 @@ class NavActivity : AppCompatActivity() {
         }
     }
 
+    // ── Live tracking: the office sees where the bus is (driver mode only, never in Practice) ──
+    private val tracking get() = runId != null && !simulate
+    private val pendingPoints = org.json.JSONArray()
+    private val offRouteEvents = org.json.JSONArray()
+    private var goingToStart = false
+    private var lastPointAt = 0L
+    private var lastPoint: Point? = null
+    private var sending = false
+    private var finalSent = false
+
+    private fun nowIso(): String = java.time.Instant.now().toString()
+
+    private fun trackPoint(loc: Location) {
+        if (!tracking) return
+        val p = Point.fromLngLat(loc.longitude, loc.latitude)
+        val now = System.currentTimeMillis()
+        val moved = lastPoint?.let { Geo.dist(it, p) } ?: Double.MAX_VALUE
+        // A point every 5 s while moving, every 30 s while standing
+        if (now - lastPointAt < 5000 || (moved < 15 && now - lastPointAt < 30000)) return
+        lastPointAt = now; lastPoint = p
+        if (pendingPoints.length() < 3000) pendingPoints.put(org.json.JSONArray().put(loc.latitude).put(loc.longitude).put(now / 1000))
+    }
+
+    private fun startTracking() {
+        if (!tracking) return
+        lifecycleScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(15000)
+                if (mode == Mode.FINISHED) break
+                sendTrack(false)
+            }
+        }
+    }
+
+    private fun sendSoon() { if (tracking) lifecycleScope.launch { sendTrack(false) } }
+
+    private fun trackState(): String = when (mode) {
+        Mode.FINISHED -> "finished"
+        Mode.REJOINING -> if (goingToStart) "going_to_start" else "off_path"
+        else -> if (exactRoads) "on_path" else "no_set_roads"
+    }
+
+    private fun trackBody(finished: Boolean): org.json.JSONObject {
+        val pts = org.json.JSONArray()
+        for (i in 0 until pendingPoints.length()) pts.put(pendingPoints.get(i))
+        val st = org.json.JSONArray()
+        stops.filter { it.status != 0 }.forEach { s ->
+            st.put(org.json.JSONObject().put("id", s.stop.id).put("number", s.stop.number).put("name", s.stop.shortName)
+                .put("time", s.stop.time ?: org.json.JSONObject.NULL).put("status", if (s.status == 1) "done" else "skipped").put("at", s.at ?: org.json.JSONObject.NULL))
+        }
+        val nxt = stops.getOrNull(nextStop)
+        var late: Double? = null
+        if (nxt?.stop?.time != null) {
+            val m = Regex("^(\\d{1,2}):(\\d{2})").find(nxt.stop.time!!)
+            if (m != null) {
+                val now = java.time.ZonedDateTime.now(NY)
+                late = (now.hour * 60 + now.minute) - (m.groupValues[1].toInt() * 60 + m.groupValues[2].toInt()).toDouble()
+            }
+        }
+        val loc = lastLocation
+        return org.json.JSONObject()
+            .put("action", "track").put("run_id", runId).put("route_id", plan.routeId).put("route_code", plan.code)
+            .put("date", intent.getStringExtra("date") ?: todayNY().toString())
+            .put("path_id", plan.json.optJSONObject("path")?.optString("id") ?: org.json.JSONObject.NULL)
+            .put("points", pts).put("stops", st).put("stops_total", stops.size)
+            .put("off_route_events", offRouteEvents)
+            .put("state", if (finished) "finished" else trackState()).put("exact_roads", exactRoads)
+            .put("next_stop", if (nxt == null) org.json.JSONObject.NULL else org.json.JSONObject().put("number", nxt.stop.number).put("name", nxt.stop.shortName).put("time", nxt.stop.time ?: org.json.JSONObject.NULL))
+            .put("late_minutes", late?.takeIf { it > 0 } ?: 0.0)
+            .put("heading", loc?.bearing ?: org.json.JSONObject.NULL)
+            .put("speed_mph", loc?.speed?.let { it * 2.237 } ?: org.json.JSONObject.NULL)
+            .put("finished", finished)
+    }
+
+    private suspend fun sendTrack(finished: Boolean) {
+        if (!tracking || plan.routeId.isEmpty()) return
+        if (sending && !finished) return
+        sending = true
+        val body = trackBody(finished)
+        val sent = body.getJSONArray("points").length()
+        try {
+            Api.call(this, org.json.JSONObject(body.toString()))
+            // Drop what went through (new points may have come in meanwhile)
+            val rest = org.json.JSONArray()
+            for (i in sent until pendingPoints.length()) rest.put(pendingPoints.get(i))
+            while (pendingPoints.length() > 0) pendingPoints.remove(0)
+            for (i in 0 until rest.length()) pendingPoints.put(rest.get(i))
+        } catch (e: ApiError) {
+            // No signal at the end of the route: keep it on the tablet, sent from My Day later
+            if (finished) Api.saveTrack(this, body)
+        } finally {
+            sending = false
+        }
+    }
+
     private fun markDone() {
         val r = runId ?: return
+        // Last report for this trip; runs on its own so it isn't cut off when this screen closes
+        if (tracking && !finalSent) {
+            finalSent = true
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()).launch { sendTrack(true) }
+        }
         Prefs.markRunDone(this, intent.getStringExtra("date") ?: todayNY().toString(), r)
     }
 
@@ -622,8 +723,9 @@ class NavActivity : AppCompatActivity() {
         val last = min(stops.size - 1, nextStop + 3)
         for (i in nextStop..last) {
             if (Geo.dist(p, stops[i].target) <= 40.0) {
-                for (j in nextStop until i) if (stops[j].status == 0) stops[j].status = 2
+                for (j in nextStop until i) if (stops[j].status == 0) { stops[j].status = 2; stops[j].at = nowIso() }
                 stops[i].status = 1
+                stops[i].at = nowIso()
                 nextStop = i + 1
                 changed = stops[i]
                 break
@@ -632,11 +734,13 @@ class NavActivity : AppCompatActivity() {
         // Drove past the next stop without stopping there
         while (nextStop < stops.size && cum[progressIdx] - cum[stops[nextStop].pathIdx] > 120) {
             stops[nextStop].status = 2
+            stops[nextStop].at = nowIso()
             nextStop++
             if (changed == null) changed = stops[nextStop - 1]
         }
         if (changed != null) {
             drawStops()
+            sendSoon()
             if (changed.status == 1) {
                 val nxt = stops.getOrNull(nextStop)
                 say("Stop ${changed.stop.number}, ${changed.stop.shortName}." + if (nxt != null) " Next: ${nxt.stop.shortName}." else " That was the last stop.")
@@ -672,6 +776,8 @@ class NavActivity : AppCompatActivity() {
         if (now - lastRejoinAt < 8000) return
         val loc = lastLocation ?: return
         offRouteCount++
+        offRouteEvents.put(org.json.JSONObject().put("at", nowIso()).put("lat", loc.latitude).put("lng", loc.longitude))
+        sendSoon()
         startRejoin(Point.fromLngLat(loc.longitude, loc.latitude), progressIdx, firstTime = false)
     }
 
@@ -684,6 +790,7 @@ class NavActivity : AppCompatActivity() {
         rejoinFrom = join
         rejoinTo = then
         mode = Mode.REJOINING
+        goingToStart = firstTime
         status(if (firstTime) "Going to the start of the route" else "Off the path — going back to it", Color.parseColor("#B45309"), Color.parseColor("#FEF3C7"))
         if (!firstTime) say("Off route. Returning to the planned route.")
         lifecycleScope.launch {
@@ -699,6 +806,7 @@ class NavActivity : AppCompatActivity() {
     private fun resumeFrom(idx: Int) {
         if (mode == Mode.SWITCHING || mode == Mode.FINISHED) return
         progressIdx = max(progressIdx, idx)
+        goingToStart = false
         val k = segments.indexOfFirst { idx < it.end }
         if (k < 0) { onFinished(); return }
         val seg = segments[k]

@@ -70,6 +70,7 @@ class MyDayActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 Api.flushQueue(this@MyDayActivity)
+                Api.flushTracks(this@MyDayActivity)
                 val (j, cached) = Api.myDay(this@MyDayActivity)
                 day = j
                 date = j.optString("date")
