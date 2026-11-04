@@ -30,7 +30,7 @@ jobs:
 
       - name: Check the Mapbox token is set
         env:
-          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN || vars.MAPBOX_PUBLIC_TOKEN }}
         run: |
           if [ -z "$MAPBOX_PUBLIC_TOKEN" ]; then
             echo "::warning::Add the GitHub secret MAPBOX_PUBLIC_TOKEN (your Mapbox pk. token): repo Settings > Secrets and variables > Actions. Building only to check the code; nothing will be published."
@@ -60,7 +60,7 @@ jobs:
 
       - name: Build the app
         env:
-          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN }}
+          MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN || vars.MAPBOX_PUBLIC_TOKEN }}
           MAPBOX_DOWNLOADS_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
         run: gradle :app:assembleRelease --stacktrace --no-daemon
 
