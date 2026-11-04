@@ -381,8 +381,10 @@ class NavActivity : AppCompatActivity() {
             drawPlan()
             if (!buildMatchedSegments(startIdx)) return
         } else {
+            val yardLat = plan.yardLat
+            val yardLng = plan.yardLng
             val origin: Point = if (simulate) {
-                if (plan.yardLat != null && plan.yardLng != null) Point.fromLngLat(plan.yardLng, plan.yardLat) else Point.fromLngLat(plan.stops[0].lng, plan.stops[0].lat)
+                if (yardLat != null && yardLng != null) Point.fromLngLat(yardLng, yardLat) else Point.fromLngLat(plan.stops[0].lng, plan.stops[0].lat)
             } else {
                 status("Waiting for GPS…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
                 withTimeoutOrNull(30000) { firstLocation.await() } ?: run { fail("No GPS signal. Go outside or near a window and try again."); return }
