@@ -3,6 +3,7 @@ package com.ystransportation.busflow.tablet
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -92,8 +93,11 @@ class RoutesActivity : AppCompatActivity() {
         shown = routes.filter { r ->
             (!todayOnly || r.runsToday) && (q.isEmpty() || (r.code + r.label + r.school).uppercase().replace(Regex("[^A-Z0-9]"), "").contains(q))
         }.sortedWith(compareBy({ !it.runsToday }, { it.code }))
-        b.filterToday.alpha = if (todayOnly) 1f else 0.55f
-        b.filterAll.alpha = if (todayOnly) 0.55f else 1f
+        // The chosen filter is filled in, the other one is just outlined
+        listOf(b.filterToday to todayOnly, b.filterAll to !todayOnly).forEach { (btn, on) ->
+            btn.backgroundTintList = ColorStateList.valueOf(if (on) ContextCompat.getColor(this, R.color.brand) else Color.TRANSPARENT)
+            btn.setTextColor(if (on) Color.WHITE else ContextCompat.getColor(this, R.color.ink))
+        }
         adapter.rows = shown.map { r ->
             val hasToday = todayDay.isNotEmpty() && r.approvedDays.contains(todayDay)
             val any = r.approvedDays.isNotEmpty()

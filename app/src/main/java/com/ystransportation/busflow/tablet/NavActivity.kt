@@ -575,7 +575,8 @@ class NavActivity : AppCompatActivity() {
             return
         }
         b.nextStop.text = "Stop ${nxt.stop.number}: ${nxt.stop.shortName}"
-        val along = if (p != null) max(0.0, cum[nxt.pathIdx] - cum[progressIdx]) else null
+        // Along the path once on it; before that (going to the start, or off the path) at least the straight-line distance
+        val along = if (p != null) max(max(0.0, cum[nxt.pathIdx] - cum[progressIdx]), Geo.dist(p, nxt.target)) else null
         b.nextDetail.text = listOfNotNull(
             fmtTime(nxt.stop.time).ifEmpty { null },
             along?.let { fmtMiles(it) },
