@@ -602,20 +602,53 @@ class NavActivity : AppCompatActivity() {
         val p = Point.fromLngLat(loc.longitude, loc.latitude)
         val now = System.currentTimeMillis()
         val moved = lastPoint?.let { Geo.dist(it, p) } ?: Double.MAX_VALUE
-        // A point every 5 s while moving, every 30 s while standing
-        if (now - lastPointAt < 5000 || (moved < 15 && now - lastPointAt < 30000)) return
+        // A point every 2 s while moving, every 20 s while standing
+        if (now - lastPointAt < 2000 || (moved < 10 && now - lastPointAt < 20000)) return
         lastPointAt = now; lastPoint = p
         if (pendingPoints.length() < 3000) pendingPoints.put(org.json.JSONArray().put(loc.latitude).put(loc.longitude).put(now / 1000))
     }
 
     private fun startTracking() {
         if (!tracking) return
+        // The trip's log (track, stops) every 20 s
         lifecycleScope.launch {
             while (true) {
-                kotlinx.coroutines.delay(15000)
+                kotlinx.coroutines.delay(20000)
                 if (mode == Mode.FINISHED) break
                 sendTrack(false)
             }
+        }
+        // The live position every 3 s, so the office sees exactly where the bus is
+        lifecycleScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(3000)
+                if (mode == Mode.FINISHED) break
+                sendPosition()
+            }
+        }
+    }
+
+    private var posId: String? = null
+    private var lastPosSent = 0L
+    private var posSending = false
+
+    private suspend fun sendPosition() {
+        val loc = lastLocation ?: return
+        if (posSending || loc.timestamp == lastPosSent) return
+        posSending = true
+        try {
+            val j = Api.call(this, org.json.JSONObject()
+                .put("action", "pos").put("lat", loc.latitude).put("lng", loc.longitude).put("at", loc.timestamp)
+                .put("heading", loc.bearing ?: org.json.JSONObject.NULL)
+                .put("speed_mph", loc.speed?.let { it * 2.237 } ?: org.json.JSONObject.NULL)
+                .put("state", trackState()).put("run_id", runId).put("route_code", plan.code)
+                .put("pos_id", posId ?: org.json.JSONObject.NULL))
+            posId = j.optString("pos_id").ifEmpty { posId }
+            lastPosSent = loc.timestamp
+        } catch (e: ApiError) {
+            // No signal: the next one goes when it's back (the trip log keeps every point)
+        } finally {
+            posSending = false
         }
     }
 

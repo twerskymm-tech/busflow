@@ -65,6 +65,54 @@ class MyDayActivity : AppCompatActivity() {
         if (::b.isInitialized) load()
     }
 
+    override fun onPause() {
+        super.onPause()
+        stopPing()
+    }
+
+    // ── Between routes (clocked in, not driving a route on the tablet): the office still sees the bus live ──
+    private var pingJob: kotlinx.coroutines.Job? = null
+    private var pingListener: android.location.LocationListener? = null
+    private var pingLoc: android.location.Location? = null
+    private var posId: String? = null
+
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startPing() {
+        if (pingJob != null) return
+        val lm = getSystemService(LOCATION_SERVICE) as android.location.LocationManager
+        val l = object : android.location.LocationListener {
+            override fun onLocationChanged(location: android.location.Location) { pingLoc = location }
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+            @Deprecated("Deprecated in Java")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        }
+        try { lm.requestLocationUpdates(android.location.LocationManager.GPS_PROVIDER, 2000L, 0f, l, mainLooper) } catch (e: Exception) { }
+        pingListener = l
+        pingJob = lifecycleScope.launch {
+            var lastSent = 0L
+            while (true) {
+                kotlinx.coroutines.delay(5000)
+                val loc = pingLoc ?: continue
+                if (loc.time == lastSent) continue
+                try {
+                    val j = Api.call(this@MyDayActivity, JSONObject().put("action", "pos").put("lat", loc.latitude).put("lng", loc.longitude)
+                        .put("at", loc.time).put("heading", if (loc.hasBearing()) loc.bearing.toDouble() else JSONObject.NULL)
+                        .put("speed_mph", if (loc.hasSpeed()) loc.speed * 2.237 else JSONObject.NULL)
+                        .put("state", "between_routes").put("pos_id", posId ?: JSONObject.NULL))
+                    posId = j.optString("pos_id").ifEmpty { posId }
+                    lastSent = loc.time
+                } catch (e: ApiError) { /* try again in 5 s */ }
+            }
+        }
+    }
+
+    private fun stopPing() {
+        pingJob?.cancel(); pingJob = null
+        pingListener?.let { try { (getSystemService(LOCATION_SERVICE) as android.location.LocationManager).removeUpdates(it) } catch (e: Exception) { } }
+        pingListener = null
+    }
+
     private fun load() {
         b.progress.visibility = View.VISIBLE
         lifecycleScope.launch {
@@ -148,6 +196,7 @@ class MyDayActivity : AppCompatActivity() {
             b.swipe.setColor(ContextCompat.getColor(this, R.color.brand))
             b.swipe.reverse = false
         } else {
+            startPing()
             b.status.text = if (p != null) "Clocked in at ${fmtMs(parseMs(p.optString("clock_in_time")))}" else "Clocked in (will send when there's signal)"
             b.swipe.setText("«  Swipe to clock out")
             b.swipe.setColor(Color.parseColor("#B91C1C"))
@@ -267,6 +316,7 @@ class MyDayActivity : AppCompatActivity() {
     }
 
     private suspend fun signOut() {
+        stopPing()
         Api.logout(this)
         Prefs.signOut(this)
         toSignIn()
