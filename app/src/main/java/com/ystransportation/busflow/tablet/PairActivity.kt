@@ -61,7 +61,7 @@ class PairActivity : AppCompatActivity() {
     }
 
     private fun openRoutes() {
-        startActivity(Intent(this, RoutesActivity::class.java))
+        startActivity(Intent(this, SignInActivity::class.java))
         finish()
     }
 }

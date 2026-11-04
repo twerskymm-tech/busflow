@@ -156,6 +156,13 @@ class NavActivity : AppCompatActivity() {
     private var started = false
     private var muted = false
 
+    // Driver mode (signed in on a bus tablet): this run, the runs after it, and what's at each stop
+    private var runId: String? = null
+    private var chain = org.json.JSONArray()
+    private var stopsByRoute = JSONObject()
+    private val students = HashMap<String, List<String>>()
+    private var nextTimer: android.os.CountDownTimer? = null
+
     private val density = Resources.getSystem().displayMetrics.density
 
     // ── Mapbox observers ────────────────────────────────────────────────────────
@@ -268,7 +275,11 @@ class NavActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         b = ActivityNavBinding.inflate(layoutInflater)
         setContentView(b.root)
+        // Either a whole plan (picked from the route list), or a run of the signed-in driver to load
         plan = Plan.from(JSONObject(intent.getStringExtra("plan") ?: "{}"))
+        runId = intent.getStringExtra("run_id")
+        chain = try { org.json.JSONArray(intent.getStringExtra("chain") ?: "[]") } catch (e: Exception) { org.json.JSONArray() }
+        stopsByRoute = try { JSONObject(intent.getStringExtra("stops_by_route") ?: "{}") } catch (e: Exception) { JSONObject() }
         simulate = intent.getBooleanExtra("simulate", false)
 
         viewportDataSource = MapboxNavigationViewportDataSource(b.mapView.mapboxMap)
@@ -312,12 +323,13 @@ class NavActivity : AppCompatActivity() {
         applyMute()
         b.soundButton.setOnClickListener { muted = !muted; Prefs.setMuted(this, muted); applyMute() }
         status(if (simulate) "PRACTICE · Preparing route…" else "Preparing route…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
-        b.nextStop.text = plan.code
-        b.nextDetail.text = "${plan.day} · ${plan.stops.size} stops"
+        b.nextStop.text = plan.code.ifEmpty { "Loading route…" }
+        b.nextDetail.text = if (plan.code.isEmpty()) "" else "${plan.day} · ${plan.stops.size} stops"
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        nextTimer?.cancel()
         maneuverApi.cancel()
         routeLineApi.cancel()
         routeLineView.cancel()
@@ -334,11 +346,11 @@ class NavActivity : AppCompatActivity() {
     }
 
     private fun confirmEnd() {
-        if (mode == Mode.FINISHED) { finish(); return }
+        if (mode == Mode.FINISHED) { if (nextTimer != null) startNext() else finish(); return }
         AlertDialog.Builder(this)
             .setTitle("End this route?")
             .setMessage("${stops.count { it.status == 1 }} of ${stops.size} stops done.")
-            .setPositiveButton("End route") { _, _ -> finish() }
+            .setPositiveButton("End route") { _, _ -> markDone(); finish() }
             .setNegativeButton("Keep driving", null)
             .show()
     }
@@ -361,7 +373,38 @@ class NavActivity : AppCompatActivity() {
 
     // ── Getting the route ready ─────────────────────────────────────────────────
 
+    /** Driver mode: load the run's route for today, with only the stops the driver has today. */
+    private suspend fun loadRunPlan(): Boolean {
+        val routeId = intent.getStringExtra("route_id") ?: return true
+        if (plan.routeId.isNotEmpty()) return true
+        val date = intent.getStringExtra("date") ?: todayNY().toString()
+        return try {
+            val (j, _) = Api.route(this, routeId, date)
+            var p = Plan.from(j)
+            // Same stops as his My Day (a closed school's stops are already taken off there)
+            val mine = stopsByRoute.optJSONArray(routeId)
+            if (mine != null && mine.length() > 0) {
+                val ids = HashSet<String>()
+                for (i in 0 until mine.length()) {
+                    val st = mine.getJSONObject(i)
+                    ids.add(st.optString("id"))
+                    val names = st.optJSONArray("students")
+                    if (names != null && names.length() > 0) students[st.optString("id")] = (0 until names.length()).map { names.optString(it) }
+                }
+                p = p.copy(stops = p.stops.filter { ids.contains(it.id) })
+            }
+            plan = p
+            b.nextStop.text = plan.code
+            b.nextDetail.text = "${plan.stops.size} stops"
+            true
+        } catch (e: ApiError) {
+            fail(e.message ?: "Could not load the route.")
+            false
+        }
+    }
+
     private suspend fun prepare() {
+        if (!loadRunPlan()) return
         if (plan.stops.isEmpty()) { fail("This route has no stops on the map."); return }
         exactRoads = plan.hasPath
         if (exactRoads) {
@@ -523,7 +566,43 @@ class NavActivity : AppCompatActivity() {
         b.nextDetail.text = "$done of ${stops.size} stops done" + (if (skipped > 0) " · $skipped skipped" else "") + (if (offRouteCount > 0) " · off the path $offRouteCount×" else "")
         b.endButton.text = "Close"
         b.maneuverView.visibility = View.INVISIBLE
-        say("Route finished.")
+        markDone()
+        val next = if (chain.length() > 0) chain.getJSONObject(0) else null
+        if (next != null && !simulate) {
+            // Back-to-back: the next route starts by itself (or right away with a tap)
+            say("Route finished. Next route: ${spoken(next.optString("code"))}.")
+            b.endButton.text = "Start now"
+            nextTimer = object : android.os.CountDownTimer(20000, 1000) {
+                override fun onTick(ms: Long) { b.nextDetail.text = "Next: ${next.optString("code")} — starting in ${ms / 1000 + 1} s" }
+                override fun onFinish() { startNext() }
+            }.start()
+        } else if (runId != null && !simulate) {
+            say("Route finished. That was your last route. Clock out when you're back.")
+            b.nextDetail.text = b.nextDetail.text.toString() + "\nLast route done — tap Close, then clock out."
+        } else {
+            say("Route finished.")
+        }
+    }
+
+    private fun markDone() {
+        val r = runId ?: return
+        Prefs.markRunDone(this, intent.getStringExtra("date") ?: todayNY().toString(), r)
+    }
+
+    private fun startNext() {
+        nextTimer?.cancel()
+        val next = if (chain.length() > 0) chain.getJSONObject(0) else return
+        val rest = org.json.JSONArray()
+        for (i in 1 until chain.length()) rest.put(chain.get(i))
+        startActivity(
+            android.content.Intent(this, NavActivity::class.java)
+                .putExtra("route_id", next.optString("route_id"))
+                .putExtra("run_id", next.optString("run_id"))
+                .putExtra("date", intent.getStringExtra("date"))
+                .putExtra("chain", rest.toString())
+                .putExtra("stops_by_route", stopsByRoute.toString()),
+        )
+        finish()
     }
 
     /** Called for every GPS update: moves progress along the path, checks stops, spots a rejoin. */
@@ -575,13 +654,14 @@ class NavActivity : AppCompatActivity() {
             return
         }
         b.nextStop.text = "Stop ${nxt.stop.number}: ${nxt.stop.shortName}"
+        val kids = students[nxt.stop.id].orEmpty()
         // Along the path once on it; before that (going to the start, or off the path) at least the straight-line distance
         val along = if (p != null) max(max(0.0, cum[nxt.pathIdx] - cum[progressIdx]), Geo.dist(p, nxt.target)) else null
         b.nextDetail.text = listOfNotNull(
             fmtTime(nxt.stop.time).ifEmpty { null },
             along?.let { fmtMiles(it) },
             "${nextStop + 1} of ${stops.size}",
-        ).joinToString(" · ")
+        ).joinToString(" · ") + if (kids.isNotEmpty()) "\n" + kids.joinToString(", ") else ""
     }
 
     // ── Off the path: back to the planned path (never a new shortcut) ───────────

@@ -11,7 +11,7 @@ android {
         minSdk 26
         targetSdk 34
         versionCode runNumber
-        versionName "0.2.${runNumber}"
+        versionName "0.4.${runNumber}"
         // Mapbox public token comes from the GitHub secret MAPBOX_PUBLIC_TOKEN (never stored in the repo)
         resValue "string", "mapbox_access_token", (System.getenv('MAPBOX_PUBLIC_TOKEN') ?: "")
     }

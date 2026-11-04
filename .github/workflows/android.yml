@@ -77,7 +77,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="0.2.${{ github.run_number }}"
+          VERSION="0.4.${{ github.run_number }}"
           gh release delete tablet-latest --yes --cleanup-tag || true
           gh release create tablet-latest busflow-tablet.apk \
             --title "BusFlow Tablet $VERSION" \
