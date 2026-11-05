@@ -309,7 +309,17 @@ class NavActivity : AppCompatActivity() {
         speechApi = MapboxSpeechApi(this, Locale.US.language)
         voicePlayer = MapboxVoiceInstructionsPlayer(this, Locale.US.language)
         routeLineApi = MapboxRouteLineApi(MapboxRouteLineApiOptions.Builder().build())
-        routeLineView = MapboxRouteLineView(MapboxRouteLineViewOptions.Builder(this).routeLineBelowLayerId("road-label-navigation").build())
+        routeLineView = MapboxRouteLineView(
+            MapboxRouteLineViewOptions.Builder(this).routeLineBelowLayerId("road-label-navigation")
+                // BusFlow steel blue, navy edge
+                .routeLineColorResources(
+                    com.mapbox.navigation.ui.maps.route.line.model.RouteLineColorResources.Builder()
+                        .routeDefaultColor(Color.parseColor("#33648A"))
+                        .routeCasingColor(Color.parseColor("#16213C"))
+                        .build(),
+                )
+                .build(),
+        )
         routeArrowView = MapboxRouteArrowView(RouteArrowOptions.Builder(this).build())
 
         b.mapView.mapboxMap.loadStyle(NavigationStyles.NAVIGATION_DAY_STYLE) { style ->
@@ -335,7 +345,7 @@ class NavActivity : AppCompatActivity() {
         muted = Prefs.muted(this)
         applyMute()
         b.soundButton.setOnClickListener { muted = !muted; Prefs.setMuted(this, muted); applyMute() }
-        status(if (simulate) "PRACTICE · Preparing route…" else "Preparing route…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+        status(if (simulate) "PRACTICE · Preparing route…" else "Preparing route…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
         b.nextStop.text = plan.code.ifEmpty { "Loading route…" }
         b.nextDetail.text = if (plan.code.isEmpty()) "" else "${plan.day} · ${plan.stops.size} stops"
     }
@@ -472,7 +482,7 @@ class NavActivity : AppCompatActivity() {
             cum = Geo.cumulative(path)
             var startIdx = 0
             if (!simulate) {
-                status("Waiting for GPS…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                status("Waiting for GPS…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
                 val here = withTimeoutOrNull(30000) { firstLocation.await() }
                 if (here == null) { fail("No GPS signal. Go outside or near a window and try again."); return }
                 // Start from the nearest spot of the first part of the path (the bus may already be on its way)
@@ -496,7 +506,7 @@ class NavActivity : AppCompatActivity() {
             val origin: Point = if (simulate) {
                 if (yardLat != null && yardLng != null) Point.fromLngLat(yardLng, yardLat) else Point.fromLngLat(plan.stops[0].lng, plan.stops[0].lat)
             } else {
-                status("Waiting for GPS…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                status("Waiting for GPS…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
                 withTimeoutOrNull(30000) { firstLocation.await() } ?: run { fail("No GPS signal. Go outside or near a window and try again."); return }
             }
             if (resumeAt >= plan.stops.size) {
@@ -565,7 +575,7 @@ class NavActivity : AppCompatActivity() {
         for ((a, z, detour) in parts) {
             if (detour) {
                 n++
-                if (!replan) status("Preparing detour…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                if (!replan) status("Preparing detour…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
                 val r = requestDirections(listOf(path[a], path[z]), null, null)
                 if (r != null) { built.add(Seg(a, z, r, detour = true)); continue }
                 // No way around: keep the planned roads there
@@ -575,7 +585,7 @@ class NavActivity : AppCompatActivity() {
             while (i < idx.size - 1) {
                 val j = min(i + 99, idx.size - 1)
                 n++
-                if (!replan) status("Preparing route $n…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+                if (!replan) status("Preparing route $n…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
                 val route = matchOrRoute(idx.subList(i, j + 1).map { path[it] })
                     ?: run { if (!replan) fail("Could not prepare the route (no internet?). Try again."); return false }
                 built.add(Seg(idx[i], idx[j], route))
@@ -749,7 +759,7 @@ class NavActivity : AppCompatActivity() {
         rejoinTo = target
         mode = Mode.REJOINING
         goingToStart = false
-        status("Going to the next stop", Color.parseColor("#1D4ED8"), Color.parseColor("#DBEAFE"))
+        status("Going to the next stop", Color.parseColor("#22445D"), Color.parseColor("#E2ECF3"))
         lifecycleScope.launch {
             val route = requestDirections(listOf(here, path[target.coerceIn(0, path.lastIndex)]), null, lastLocation?.bearing)
             if (mode != Mode.REJOINING) return@launch
@@ -768,7 +778,7 @@ class NavActivity : AppCompatActivity() {
         val total = (pts.size + 22) / 24
         while (i < pts.size - 1) {
             n++
-            status("Preparing route $n of $total…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
+            status("Preparing route $n of $total…", Color.parseColor("#344256"), Color.parseColor("#E2ECF3"))
             val chunk = pts.subList(i, min(i + 25, pts.size))
             val route = requestDirections(chunk, null, if (i == 0) lastLocation?.bearing else null)
                 ?: run { if (!quiet) fail("Could not get directions (no internet?). Try again."); return false }
@@ -1296,7 +1306,7 @@ class NavActivity : AppCompatActivity() {
             circleStrokeWidth(2.0)
         })
         style.addLayer(circleLayer("bf-todo-c", "bf-stops-todo") {
-            circleColor(Color.parseColor("#0D9688"))
+            circleColor(Color.parseColor("#33648A"))
             circleRadius(13.0)
             circleStrokeColor(Color.WHITE)
             circleStrokeWidth(2.5)

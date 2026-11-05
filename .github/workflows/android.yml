@@ -58,6 +58,20 @@ jobs:
           echo "::add-mask::$(cat ~/.busflow-signing/password)"
           echo "BUSFLOW_KEYSTORE_PASSWORD=$(cat ~/.busflow-signing/password)" >> "$GITHUB_ENV"
 
+      # Same fonts as the BusFlow web app (Manrope for text, Outfit for titles)
+      - name: Fonts
+        run: |
+          mkdir -p /tmp/fonts && cd /tmp/fonts
+          npm pack @expo-google-fonts/manrope @expo-google-fonts/outfit --silent
+          for t in *.tgz; do tar -xzf "$t"; mv package "${t%.tgz}"; done
+          F=$GITHUB_WORKSPACE/app/src/main/res/font
+          cp "$(find . -name 'Manrope_400Regular.ttf' | head -1)" $F/manrope_regular.ttf
+          cp "$(find . -name 'Manrope_600SemiBold.ttf' | head -1)" $F/manrope_semibold.ttf
+          cp "$(find . -name 'Manrope_700Bold.ttf' | head -1)" $F/manrope_bold.ttf
+          cp "$(find . -name 'Outfit_600SemiBold.ttf' | head -1)" $F/outfit_semibold.ttf
+          cp "$(find . -name 'Outfit_700Bold.ttf' | head -1)" $F/outfit_bold.ttf
+          ls -la $F
+
       - name: Build the app
         env:
           MAPBOX_PUBLIC_TOKEN: ${{ secrets.MAPBOX_PUBLIC_TOKEN || vars.MAPBOX_PUBLIC_TOKEN }}

@@ -71,7 +71,7 @@ class SignInActivity : AppCompatActivity() {
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.titleBox.setOnLongClickListener { startActivity(Intent(this, RoutesActivity::class.java)); true }
         b.codeBox.setOnClickListener { onPin = false; render() }
-        b.pinBox.setOnClickListener { if (code.isNotEmpty()) { onPin = true; render() } }
+        b.pinBox.visibility = View.GONE
         b.busTitle.text = Prefs.tabletName(this)
         buildPad()
         render()
@@ -97,16 +97,12 @@ class SignInActivity : AppCompatActivity() {
 
     private fun press(k: String) {
         if (busy) return
-        val f = if (onPin) pin else code
         when (k) {
-            "⌫" -> if (f.isNotEmpty()) f.deleteCharAt(f.length - 1) else if (onPin) onPin = false
-            "OK" -> if (!onPin) { if (code.isNotEmpty()) onPin = true } else submit()
-            else -> {
-                if (onPin) { if (pin.length < 4) pin.append(k) } else if (code.length < 8) code.append(k)
-            }
+            "⌫" -> if (code.isNotEmpty()) code.deleteCharAt(code.length - 1)
+            "OK" -> submit()
+            else -> if (code.length < 8) code.append(k)
         }
         render()
-        if (onPin && pin.length == 4) submit()
     }
 
     private fun render() {
@@ -129,21 +125,20 @@ class SignInActivity : AppCompatActivity() {
     }
 
     private fun submit() {
-        if (busy || code.isEmpty() || pin.length < 4) return
+        if (busy || code.isEmpty()) return
         busy = true
         b.progress.visibility = View.VISIBLE
         showMsg("Signing in…", false)
         lifecycleScope.launch {
             try {
-                val j = Api.login(this@SignInActivity, code.toString(), pin.toString())
+                val j = Api.login(this@SignInActivity, code.toString())
                 val drv = j.optJSONObject("driver") ?: org.json.JSONObject()
                 Prefs.setSession(this@SignInActivity, j.getString("session"), drv.optString("id"), drv.optString("name"))
                 openDay()
             } catch (e: ApiError) {
                 if (e.unpaired) { Prefs.unpair(this@SignInActivity); startActivity(Intent(this@SignInActivity, PairActivity::class.java)); finish(); return@launch }
                 showMsg(if (e.offline) "No internet. Try again in a moment." else (e.message ?: "Could not sign in"), true)
-                pin.clear()
-                if (!e.offline) { code.clear(); onPin = false }
+                if (!e.offline) code.clear()
                 render()
             } finally {
                 busy = false

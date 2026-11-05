@@ -25,6 +25,7 @@
             android:text="BusFlow Tablet"
             android:textColor="@color/ink"
             android:textSize="28sp"
+            android:fontFamily="@font/outfit"
             android:textStyle="bold" />
 
         <TextView

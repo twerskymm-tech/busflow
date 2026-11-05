@@ -104,7 +104,8 @@
                     android:maxLines="2"
                     android:textColor="@color/ink"
                     android:textSize="22sp"
-                    android:textStyle="bold" />
+                    android:fontFamily="@font/outfit"
+            android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/nextDetail"
@@ -119,7 +120,7 @@
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/endButton"
-                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                style="@style/BusFlowButton.Outlined"
                 android:layout_width="wrap_content"
                 android:layout_height="64dp"
                 android:layout_marginStart="12dp"
@@ -139,7 +140,7 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/skipStop"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    style="@style/BusFlowButton.Outlined"
                     android:layout_width="0dp"
                     android:layout_height="56dp"
                     android:layout_marginEnd="8dp"
@@ -150,7 +151,7 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/roadClosed"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    style="@style/BusFlowButton.Outlined"
                     android:layout_width="0dp"
                     android:layout_height="56dp"
                     android:layout_weight="1"

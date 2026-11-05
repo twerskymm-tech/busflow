@@ -8,7 +8,7 @@
         android:id="@+id/titleBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="@color/ink"
+        android:background="@color/header"
         android:orientation="vertical"
         android:paddingStart="20dp"
         android:paddingTop="16dp"
@@ -21,13 +21,14 @@
             android:layout_height="wrap_content"
             android:textColor="#FFFFFF"
             android:textSize="26sp"
+            android:fontFamily="@font/outfit"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text="Sign in with your driver code and PIN"
+            android:text="Type your driver code"
             android:textColor="#CBD5E1"
             android:textSize="16sp" />
     </LinearLayout>
@@ -112,7 +113,8 @@
                         android:minHeight="48dp"
                         android:textColor="@color/ink"
                         android:textSize="32sp"
-                        android:textStyle="bold" />
+                        android:fontFamily="@font/outfit"
+            android:textStyle="bold" />
                 </LinearLayout>
 
                 <LinearLayout
@@ -138,7 +140,8 @@
                         android:minHeight="48dp"
                         android:textColor="@color/ink"
                         android:textSize="32sp"
-                        android:textStyle="bold" />
+                        android:fontFamily="@font/outfit"
+            android:textStyle="bold" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -148,7 +151,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:gravity="center"
-                android:text="PIN = last 4 digits of your phone number"
+                android:text="Don\'t know your code? Ask the office."
                 android:textColor="@color/muted"
                 android:textSize="15sp" />
 

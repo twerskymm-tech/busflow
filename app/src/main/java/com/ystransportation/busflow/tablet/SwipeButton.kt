@@ -27,7 +27,7 @@ class SwipeButton @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? =
 
     init {
         minimumHeight = (72 * density).toInt()
-        background = GradientDrawable().apply { cornerRadius = 36 * density; setColor(Color.parseColor("#0D9688")) }
+        background = GradientDrawable().apply { cornerRadius = 36 * density; setColor(Color.parseColor("#33648A")) }
         label.apply { setTextColor(Color.WHITE); textSize = 19f; gravity = Gravity.CENTER; setTypeface(typeface, android.graphics.Typeface.BOLD) }
         addView(label, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         val size = (64 * density).toInt()
@@ -35,7 +35,7 @@ class SwipeButton @JvmOverloads constructor(ctx: Context, attrs: AttributeSet? =
             text = "»"
             textSize = 30f
             gravity = Gravity.CENTER
-            setTextColor(Color.parseColor("#0D9688"))
+            setTextColor(Color.parseColor("#33648A"))
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.WHITE) }
         }
         addView(handle, LayoutParams(size, size, Gravity.CENTER_VERTICAL).apply { leftMargin = (4 * density).toInt() })

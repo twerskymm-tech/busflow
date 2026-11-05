@@ -4,22 +4,53 @@
         <item name="colorPrimaryDark">@color/brandDark</item>
         <item name="colorAccent">@color/brand</item>
         <item name="android:windowBackground">@color/bg</item>
-        <item name="android:statusBarColor">@color/ink</item>
+        <item name="android:statusBarColor">@color/header</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/muted</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="fontFamily">@font/manrope</item>
+        <item name="colorSecondary">@color/brand</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorError">@color/bad</item>
+        <item name="shapeAppearanceSmallComponent">@style/BusFlowShape</item>
+        <item name="shapeAppearanceMediumComponent">@style/BusFlowShape</item>
+        <item name="materialButtonStyle">@style/BusFlowButton</item>
+        <item name="materialButtonOutlinedStyle">@style/BusFlowButton.Outlined</item>
     </style>
 
-    <style name="BigButton" parent="Widget.MaterialComponents.Button">
+    <!-- 8 dp corners, like BusFlow -->
+    <style name="BusFlowShape" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">8dp</item>
+    </style>
+
+    <style name="BusFlowButton" parent="Widget.MaterialComponents.Button">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="BusFlowButton.Outlined" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:textAllCaps">false</item>
+        <item name="android:fontFamily">@font/manrope</item>
+        <item name="android:textStyle">bold</item>
+        <item name="strokeColor">@color/line</item>
+        <item name="android:textColor">@color/brand</item>
+    </style>
+
+    <style name="BigButton" parent="BusFlowButton">
         <item name="android:minHeight">64dp</item>
         <item name="android:textSize">18sp</item>
         <item name="android:textAllCaps">false</item>
     </style>
 
-    <style name="BigButton.Outlined" parent="Widget.MaterialComponents.Button.OutlinedButton">
+    <style name="BigButton.Outlined" parent="BusFlowButton.Outlined">
         <item name="android:minHeight">64dp</item>
         <item name="android:textSize">18sp</item>
         <item name="android:textAllCaps">false</item>
     </style>
 
-    <style name="ChipButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
+    <style name="ChipButton" parent="BusFlowButton.Outlined">
         <item name="android:minHeight">48dp</item>
         <item name="android:textSize">15sp</item>
         <item name="android:textAllCaps">false</item>

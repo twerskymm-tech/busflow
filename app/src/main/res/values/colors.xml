@@ -1,13 +1,16 @@
 <resources>
-    <color name="brand">#0D9688</color>
-    <color name="brandDark">#0B7A70</color>
-    <color name="ink">#0F172A</color>
-    <color name="muted">#64748B</color>
-    <color name="line">#E2E8F0</color>
+    <!-- Same colors as the BusFlow web app (src/index.css) -->
+    <color name="brand">#33648A</color>
+    <color name="brandDark">#22445D</color>
+    <color name="header">#16213C</color>
+    <color name="accent">#E2ECF3</color>
+    <color name="ink">#0F1729</color>
+    <color name="muted">#344256</color>
+    <color name="line">#DEE4ED</color>
     <color name="bg">#F8FAFC</color>
     <color name="warn">#B45309</color>
     <color name="warnBg">#FEF3C7</color>
     <color name="okBg">#D1FAE5</color>
     <color name="ok">#047857</color>
-    <color name="bad">#B91C1C</color>
+    <color name="bad">#EF4343</color>
 </resources>
