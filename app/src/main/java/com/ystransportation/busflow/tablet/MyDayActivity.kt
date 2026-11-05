@@ -34,6 +34,7 @@ class MyDayActivity : AppCompatActivity() {
         /** How far it got today (from BusFlow, any tablet) */
         val finished: Boolean = j.optJSONObject("progress")?.optBoolean("finished") ?: false
         val stopsDone: Int = j.optJSONObject("progress")?.optInt("done") ?: 0
+        val paused: Boolean = j.optJSONObject("progress")?.optBoolean("paused") ?: false
         val code: String = j.optString("route_code").ifEmpty { j.optString("route_label") }.ifEmpty { "Extra trip" }
         val bus: String? = j.optString("bus_fleet_number").takeIf { it.isNotEmpty() && it != "null" }
     }
@@ -188,9 +189,9 @@ class MyDayActivity : AppCompatActivity() {
                     fmtTime(r.j.optString("start_time")).ifEmpty { null }?.let { "first stop $it" },
                     r.bus?.let { "Bus $it" },
                     r.j.optString("closed_note").takeIf { it.isNotEmpty() && it != "null" },
-                    if (isDone && r.navigable) "tap to open again" else if (!isDone && r.stopsDone > 0) "${r.stopsDone} stops done — tap to continue" else null,
+                    if (isDone && r.navigable) "tap to open again" else if (!isDone && (r.paused || r.stopsDone > 0)) "${r.stopsDone} stops done — tap to continue" else null,
                 ).joinToString(" · "),
-                tag = when { isDone -> "Done"; !isDone && r.stopsDone > 0 -> "Started"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
+                tag = when { isDone -> "Done"; r.paused -> "Paused"; r.stopsDone > 0 -> "Started"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
                 tagColor = if (isDone) Color.parseColor("#64748B") else Color.parseColor("#047857"),
                 tagBg = if (isDone) Color.parseColor("#F1F5F9") else Color.parseColor("#D1FAE5"),
                 dim = isDone,
@@ -214,7 +215,7 @@ class MyDayActivity : AppCompatActivity() {
             b.swipe.setColor(Color.parseColor("#B91C1C"))
             b.swipe.reverse = true
             if (next != null) {
-                b.action.text = "Start route ${next.code}"
+                b.action.text = if (next.paused || next.stopsDone > 0) "Continue route ${next.code}" else "Start route ${next.code}"
                 b.action.visibility = View.VISIBLE
                 b.action.setOnClickListener { startRoute(s, next) }
             }

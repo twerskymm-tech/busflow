@@ -360,12 +360,36 @@ class NavActivity : AppCompatActivity() {
 
     private fun confirmEnd() {
         if (mode == Mode.FINISHED) { if (nextTimer != null) startNext() else finish(); return }
+        if (runId == null || simulate) {
+            AlertDialog.Builder(this)
+                .setTitle("End this route?")
+                .setPositiveButton("End") { _, _ -> finish() }
+                .setNegativeButton("Keep driving", null)
+                .show()
+            return
+        }
+        val done = stops.count { it.status == 1 }
         AlertDialog.Builder(this)
-            .setTitle("End this route?")
-            .setMessage("${stops.count { it.status == 1 }} of ${stops.size} stops done.")
-            .setPositiveButton("End route") { _, _ -> markDone(); finish() }
+            .setTitle("Pause or end ${plan.code}?")
+            .setMessage("$done of ${stops.size} stops done.\n\nPause: back to your day (to change bus, sign out…). The route continues from here when you open it again.\n\nEnd: the route is finished.")
+            .setPositiveButton("Pause") { _, _ -> pauseRoute() }
+            .setNeutralButton("End route") { _, _ -> markDone(); finish() }
             .setNegativeButton("Keep driving", null)
             .show()
+    }
+
+    /** Back to My Day without finishing: everything done so far is saved in BusFlow. */
+    private fun pauseRoute() {
+        nextTimer?.cancel()
+        mapboxNavigation.setNavigationRoutes(emptyList())
+        if (tracking) {
+            val body = trackBody(false).put("state", "paused")
+            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()).launch {
+                try { Api.call(this@NavActivity, org.json.JSONObject(body.toString())) } catch (e: ApiError) { Api.saveTrack(this@NavActivity, body) }
+            }
+        }
+        android.widget.Toast.makeText(this, "${plan.code} paused — tap it in your day to continue", android.widget.Toast.LENGTH_LONG).show()
+        finish()
     }
 
     private fun status(text: String, fg: Int, bg: Int) {
@@ -605,14 +629,33 @@ class NavActivity : AppCompatActivity() {
         drawClosures()
         val added = closures.filter { it.id !in before }
         if (!replan || added.isEmpty()) return
-        val ahead = blockedRanges(progressIdx)
-        val hitsAhead = exactRoads && ahead.any { (a, z) -> added.any { c -> (a..z).any { k -> k < path.size && Geo.dist(c.p, path[k]) <= c.radius + 20 } } }
-        if (!hitsAhead || (mode != Mode.ON_PATH && mode != Mode.REJOINING)) return
+        if (mode != Mode.ON_PATH && mode != Mode.REJOINING) return
+        val hitsAhead = path.size > 1 && added.any { c -> (progressIdx until path.size - 1).any { k -> Geo.segDist(c.p, path[k], path[k + 1]) <= c.radius + 20 } }
+        if (!hitsAhead) return
         say("A street ahead is closed. Taking a detour.")
+        status("Finding a detour…", Color.parseColor("#B91C1C"), Color.parseColor("#FEE2E2"))
         lifecycleScope.launch {
-            val from = progressIdx
-            if (buildMatchedSegments(from, replan = true)) startSegment(0)
+            val ok = if (exactRoads) buildMatchedSegments(progressIdx, replan = true) else replanByStops()
+            if (!ok) { say("No detour found. Use your judgment and stay safe."); showOnPathStatus(); return@launch }
+            startSegment(0)
+            if (simulate) startReplay(segments.flatMap { sg -> sg.route?.directionsRoute?.geometry()?.let { PolylineUtils.decode(it, 6) } ?: emptyList() })
         }
+    }
+
+    /** No set roads: new directions from here through the stops still to do, around closed streets. */
+    private suspend fun replanByStops(): Boolean {
+        val here = lastLocation?.let { Point.fromLngLat(it.longitude, it.latitude) } ?: return false
+        val k = nextStop
+        if (k >= stops.size) return false
+        val keep = stops.map { Triple(it.status, it.at, it.byDriver) }
+        val oldPath = path; val oldCum = cum; val oldSegs = segments.toList()
+        if (!buildStopSegments(here, k, quiet = true)) { path = oldPath; cum = oldCum; segments.clear(); segments.addAll(oldSegs); return false }
+        progressIdx = 0
+        setupStops(k)
+        keep.forEachIndexed { i, t -> stops[i].status = t.first; stops[i].at = t.second; stops[i].byDriver = t.third }
+        nextStop = k
+        drawPlan(); drawStops(); updatePanel(here)
+        return true
     }
 
     private fun togglePickClosure() {
@@ -627,7 +670,17 @@ class NavActivity : AppCompatActivity() {
         }
     }
 
-    private fun onClosurePicked(point: Point) {
+    /** A tap near the road ahead counts as that spot on the road (the tap is never exact). */
+    private fun snapToPath(point: Point): Point {
+        if (path.size < 2) return point
+        var best = -1; var bd = Double.MAX_VALUE
+        for (i in progressIdx until path.size - 1) { val d = Geo.segDist(point, path[i], path[i + 1]); if (d < bd) { bd = d; best = i } }
+        if (best < 0 || bd > 120) return point
+        return if (Geo.dist(point, path[best]) <= Geo.dist(point, path[best + 1])) path[best] else path[best + 1]
+    }
+
+    private fun onClosurePicked(tapped: Point) {
+        val point = snapToPath(tapped)
         pickingClosure = false
         b.roadClosed.text = "Road closed"
         val reasons = arrayOf("Construction", "Accident", "Police", "Flooding / tree down", "Other")
@@ -706,7 +759,7 @@ class NavActivity : AppCompatActivity() {
     }
 
     /** No approved path: plain directions yard/here → stop 1 → stop 2 … (25 points per request). */
-    private suspend fun buildStopSegments(origin: Point, fromStop: Int = 0): Boolean {
+    private suspend fun buildStopSegments(origin: Point, fromStop: Int = 0, quiet: Boolean = false): Boolean {
         val pts = listOf(origin) + plan.stops.drop(fromStop).map { stopTarget(it) }
         val all = ArrayList<Point>()
         val ranges = mutableListOf<Pair<Int, NavigationRoute>>()
@@ -718,7 +771,7 @@ class NavActivity : AppCompatActivity() {
             status("Preparing route $n of $total…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
             val chunk = pts.subList(i, min(i + 25, pts.size))
             val route = requestDirections(chunk, null, if (i == 0) lastLocation?.bearing else null)
-                ?: run { fail("Could not get directions (no internet?). Try again."); return false }
+                ?: run { if (!quiet) fail("Could not get directions (no internet?). Try again."); return false }
             val geo = route.directionsRoute.geometry()?.let { PolylineUtils.decode(it, 6) } ?: emptyList()
             all.addAll(if (all.isEmpty()) geo else geo.drop(1))
             ranges.add(all.size - 1 to route)
@@ -931,7 +984,7 @@ class NavActivity : AppCompatActivity() {
             .put("off_route_events", offRouteEvents)
             .put("state", if (finished) "finished" else trackState()).put("exact_roads", exactRoads)
             .put("next_stop", if (nxt == null) org.json.JSONObject.NULL else org.json.JSONObject().put("number", nxt.stop.number).put("name", nxt.stop.shortName).put("time", nxt.stop.time ?: org.json.JSONObject.NULL))
-            .put("late_minutes", late?.takeIf { it > 0 && it < 120 } ?: 0.0)
+            .put("late_minutes", (etaLateMin ?: late)?.takeIf { it > 0 && it < 120 } ?: 0.0)
             .put("heading", loc?.bearing ?: org.json.JSONObject.NULL)
             .put("speed_mph", loc?.speed?.let { it * 2.237 } ?: org.json.JSONObject.NULL)
             .put("finished", finished)
@@ -1029,6 +1082,39 @@ class NavActivity : AppCompatActivity() {
         updatePanel(p)
     }
 
+    // ── Early / late: arrival worked out from the distance left and the route's driving speed ──
+    private var etaLateMin: Double? = null
+    private val spokenTiming = HashMap<String, Int>()
+
+    private fun speedMps(): Double {
+        val r = segments.getOrNull(segIndex)?.route?.directionsRoute
+        val v = if (r != null && r.duration() > 0) r.distance() / r.duration() else 0.0
+        return if (v in 2.0..30.0) v else 9.0
+    }
+
+    /** "3 min late" / "5 min early" / "on time" for the next stop (and spoken once when it changes a lot). */
+    private fun timingFor(nxt: StopState, meters: Double): String? {
+        val m = Regex("^(\\d{1,2}):(\\d{2})").find(nxt.stop.time ?: "") ?: run { etaLateMin = null; return null }
+        val date = runCatching { java.time.LocalDate.parse(intent.getStringExtra("date") ?: plan.date) }.getOrNull() ?: todayNY()
+        val due = date.atTime(m.groupValues[1].toInt(), m.groupValues[2].toInt()).atZone(NY).toInstant().toEpochMilli()
+        // Each stop on the way costs about half a minute
+        val between = max(0, stops.indexOf(nxt) - nextStop)
+        val eta = System.currentTimeMillis() + ((meters / speedMps()) + between * 30) * 1000
+        val diff = (eta - due) / 60000.0
+        if (diff > 600 || diff < -600) { etaLateMin = null; return null }
+        etaLateMin = diff
+        val mins = Math.round(kotlin.math.abs(diff)).toInt()
+        val bucket = when { diff >= 3 -> 1; diff <= -3 -> -1; else -> 0 }
+        // Say it once per stop when early/late by 3+ minutes, and again if it gets 5 minutes worse
+        val key = nxt.stop.id
+        val last = spokenTiming[key]
+        if (bucket != 0 && meters < 4000 && (last == null || kotlin.math.abs(mins - last) >= 5)) {
+            spokenTiming[key] = mins
+            say(if (bucket > 0) "You are about $mins minutes late for stop ${nxt.stop.number}." else "You are about $mins minutes early for stop ${nxt.stop.number}. Don't leave the stop before ${fmtTime(nxt.stop.time)}.")
+        }
+        return when (bucket) { 1 -> "⚠ $mins min late"; -1 -> "$mins min early"; else -> "on time" }
+    }
+
     private fun updatePanel(p: Point?) {
         if (mode == Mode.FINISHED) return
         val nxt = stops.getOrNull(nextStop)
@@ -1041,8 +1127,10 @@ class NavActivity : AppCompatActivity() {
         val kids = students[nxt.stop.id].orEmpty()
         // Along the path once on it; before that (going to the start, or off the path) at least the straight-line distance
         val along = if (p != null) max(max(0.0, cum[nxt.pathIdx] - cum[progressIdx]), Geo.dist(p, nxt.target)) else null
+        val timing = along?.let { timingFor(nxt, it) }
         b.nextDetail.text = listOfNotNull(
-            fmtTime(nxt.stop.time).ifEmpty { null },
+            fmtTime(nxt.stop.time).ifEmpty { null }?.let { "Due $it" },
+            timing,
             along?.let { fmtMiles(it) },
             "${nextStop + 1} of ${stops.size}",
         ).joinToString(" · ") + if (kids.isNotEmpty()) "\n" + kids.joinToString(", ") else ""
