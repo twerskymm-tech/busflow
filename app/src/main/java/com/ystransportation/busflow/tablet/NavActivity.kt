@@ -383,9 +383,31 @@ class NavActivity : AppCompatActivity() {
 
     /** Driver mode: load the run's route for today, with only the stops the driver has today. */
     private suspend fun loadRunPlan(): Boolean {
-        val routeId = intent.getStringExtra("route_id") ?: return true
+        val tripId = intent.getStringExtra("trip_id")?.takeIf { it.isNotEmpty() }
+        val routeId = intent.getStringExtra("route_id")?.takeIf { it.isNotEmpty() }
+        if (routeId == null && tripId == null) return true
         if (plan.routeId.isNotEmpty()) return true
         val date = intent.getStringExtra("date") ?: todayNY().toString()
+        if (routeId == null) return try {
+            // Extra trip (e.g. split bus): its own stops, each with its students
+            val (j, _) = Api.trip(this, tripId!!)
+            val p = Plan.from(j)
+            j.optJSONArray("stops")?.let { a ->
+                for (i in 0 until a.length()) {
+                    val st = a.getJSONObject(i)
+                    val names = st.optJSONArray("students")
+                    if (names != null && names.length() > 0) students[st.optString("id")] = (0 until names.length()).map { names.optString(it) }
+                }
+            }
+            if (p.stops.isEmpty()) { fail("This trip has no addresses to drive to. Call the office."); return false }
+            plan = p
+            b.nextStop.text = plan.code
+            b.nextDetail.text = "${plan.stops.size} stops"
+            true
+        } catch (e: ApiError) {
+            fail(e.message ?: "Could not load the trip.")
+            false
+        }
         return try {
             val (j, _) = Api.route(this, routeId, date)
             var p = Plan.from(j)
@@ -853,7 +875,7 @@ class NavActivity : AppCompatActivity() {
         }
         val loc = lastLocation
         return org.json.JSONObject()
-            .put("action", "track").put("run_id", runId).put("route_id", plan.routeId).put("route_code", plan.code)
+            .put("action", "track").put("run_id", runId).put("route_id", if (plan.routeId.startsWith("trip:")) org.json.JSONObject.NULL else plan.routeId).put("route_code", plan.code)
             .put("date", intent.getStringExtra("date") ?: todayNY().toString())
             .put("path_id", plan.json.optJSONObject("path")?.optString("id") ?: org.json.JSONObject.NULL)
             .put("points", pts).put("stops", st).put("stops_total", stops.size)
@@ -906,6 +928,7 @@ class NavActivity : AppCompatActivity() {
         startActivity(
             android.content.Intent(this, NavActivity::class.java)
                 .putExtra("route_id", next.optString("route_id"))
+                .putExtra("trip_id", next.optString("trip_id"))
                 .putExtra("run_id", next.optString("run_id"))
                 .putExtra("date", intent.getStringExtra("date"))
                 .putExtra("chain", rest.toString())

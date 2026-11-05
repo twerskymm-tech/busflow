@@ -116,6 +116,10 @@ object Api {
         call(ctx, JSONObject().put("action", "home"))
     }
 
+    suspend fun trip(ctx: Context, tripId: String): Pair<JSONObject, Boolean> = cached(ctx, "trip_$tripId.json") {
+        call(ctx, JSONObject().put("action", "trip").put("trip_id", tripId))
+    }
+
     suspend fun login(ctx: Context, code: String, pin: String): JSONObject =
         call(ctx, JSONObject().put("action", "login").put("code", code).put("pin", pin))
 

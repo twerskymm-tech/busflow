@@ -27,6 +27,9 @@ class MyDayActivity : AppCompatActivity() {
     private class RunInfo(val j: JSONObject) {
         val id: String = j.optString("id")
         val routeId: String? = j.optString("route_id").takeIf { it.isNotEmpty() && it != "null" }
+        /** Extra trip (split bus, charter…): navigable when it has stops */
+        val tripId: String? = j.optString("extra_trip_ref").takeIf { it.isNotEmpty() && it != "null" }
+        val navigable: Boolean get() = routeId != null || tripId != null
         val code: String = j.optString("route_code").ifEmpty { j.optString("route_label") }.ifEmpty { "Extra trip" }
         val bus: String? = j.optString("bus_fleet_number").takeIf { it.isNotEmpty() && it != "null" }
     }
@@ -163,7 +166,7 @@ class MyDayActivity : AppCompatActivity() {
             return
         }
         val done = Prefs.doneRuns(this)
-        val next = s.runs.firstOrNull { it.routeId != null && !done.contains("$date|${it.id}") }
+        val next = s.runs.firstOrNull { it.navigable && !done.contains("$date|${it.id}") }
         b.shiftTitle.text = "${s.label.ifEmpty { "Today" }} · ${s.runs.size} route${if (s.runs.size == 1) "" else "s"}".uppercase()
         adapter.rows = s.runs.map { r ->
             val isDone = done.contains("$date|${r.id}")
@@ -175,7 +178,7 @@ class MyDayActivity : AppCompatActivity() {
                     r.bus?.let { "Bus $it" },
                     r.j.optString("closed_note").takeIf { it.isNotEmpty() && it != "null" },
                 ).joinToString(" · "),
-                tag = when { isDone -> "Done"; r == next -> "Next"; r.routeId == null -> "Extra trip"; else -> null },
+                tag = when { isDone -> "Done"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
                 tagColor = if (isDone) Color.parseColor("#64748B") else Color.parseColor("#047857"),
                 tagBg = if (isDone) Color.parseColor("#F1F5F9") else Color.parseColor("#D1FAE5"),
                 dim = isDone,
@@ -238,7 +241,7 @@ class MyDayActivity : AppCompatActivity() {
                     Prefs.setLocalPunch(this@MyDayActivity, s.start)
                     toast("No signal — clock-in saved, it will be sent later")
                 }
-                val first = s.runs.firstOrNull { it.routeId != null && !Prefs.doneRuns(this@MyDayActivity).contains("$date|${it.id}") }
+                val first = s.runs.firstOrNull { it.navigable && !Prefs.doneRuns(this@MyDayActivity).contains("$date|${it.id}") }
                 if (first != null) startRoute(s, first) else load()
             } finally {
                 busy = false
@@ -286,11 +289,12 @@ class MyDayActivity : AppCompatActivity() {
         var after = false
         for (r in s.runs) {
             if (r == run) { after = true; continue }
-            if (after && r.routeId != null) rest.put(JSONObject().put("run_id", r.id).put("route_id", r.routeId).put("code", r.code))
+            if (after && r.navigable) rest.put(JSONObject().put("run_id", r.id).put("route_id", r.routeId ?: "").put("trip_id", r.tripId ?: "").put("code", r.code))
         }
         startActivity(
             Intent(this, NavActivity::class.java)
                 .putExtra("route_id", run.routeId)
+                .putExtra("trip_id", run.tripId)
                 .putExtra("run_id", run.id)
                 .putExtra("date", date)
                 .putExtra("chain", rest.toString())
