@@ -14,6 +14,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import kotlinx.coroutines.launch
 
 /**
  * "Owner mode": a bus tablet set up (factory reset + setup QR) with BusFlow as its owner.
@@ -69,12 +70,44 @@ object Owner {
         keepLocked(activity)
     }
 
+    private var watch: kotlinx.coroutines.Job? = null
+
+    /**
+     * While unlocked the office may be in the tablet's Settings (BusFlow not on screen).
+     * This keeps asking BusFlow every 10 s; when it is locked again (Lock now, or time is up)
+     * it brings BusFlow back to the front, which locks the tablet.
+     */
+    fun watchWhileUnlocked(ctx: Context) {
+        if (watch?.isActive == true || !isOwner(ctx) || !isUnlocked(ctx)) return
+        val app = ctx.applicationContext
+        watch = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main + kotlinx.coroutines.SupervisorJob()).launch {
+            while (isUnlocked(app)) {
+                kotlinx.coroutines.delay(10000L)
+                try {
+                    val j = Api.call(app, org.json.JSONObject().put("action", "status"))
+                    val until = j.optString("unlock_until").takeIf { it.isNotEmpty() && it != "null" }
+                        ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+                    setUnlockedUntil(app, until)
+                } catch (e: Exception) { /* no signal: the time limit still ends it */ }
+            }
+            bringBack(app)
+        }
+    }
+
+    /** BusFlow back on the screen (its screens lock the tablet when they show). */
+    private fun bringBack(app: Context) {
+        val am = app.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        val task = runCatching { am.appTasks.firstOrNull() }.getOrNull()
+        if (task != null && runCatching { task.moveToFront() }.isSuccess) return
+        runCatching { app.startActivity(Intent(app, PairActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+    }
+
     /** Call from every screen's onResume. */
     fun keepLocked(activity: Activity) {
         if (!isOwner(activity)) return
         val am = activity.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val locked = am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
-        if (isUnlocked(activity)) { if (locked) runCatching { activity.stopLockTask() } }
+        if (isUnlocked(activity)) { if (locked) runCatching { activity.stopLockTask() }; watchWhileUnlocked(activity) }
         else if (!locked) runCatching { activity.startLockTask() }
     }
 }
