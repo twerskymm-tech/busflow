@@ -56,6 +56,9 @@ object Prefs {
     fun markRunDone(ctx: Context, date: String, runId: String) {
         p(ctx).edit().putStringSet("done_runs", doneRuns(ctx) + "$date|$runId").apply()
     }
+    fun unmarkRunDone(ctx: Context, date: String, runId: String) {
+        p(ctx).edit().putStringSet("done_runs", doneRuns(ctx) - "$date|$runId").apply()
+    }
 
     /** A clock-in made with no signal, not yet confirmed by BusFlow: "shiftStartIso" of that shift. */
     fun localPunch(ctx: Context): String? = p(ctx).getString("local_punch", null)
@@ -108,16 +111,16 @@ object Api {
         call(ctx, JSONObject().put("action", "routes"))
     }
 
-    suspend fun route(ctx: Context, routeId: String, date: String): Pair<JSONObject, Boolean> = cached(ctx, "route_${routeId}_$date.json") {
-        call(ctx, JSONObject().put("action", "route").put("route_id", routeId).put("date", date))
+    suspend fun route(ctx: Context, routeId: String, date: String, runId: String? = null): Pair<JSONObject, Boolean> = cached(ctx, "route_${routeId}_$date.json") {
+        call(ctx, JSONObject().put("action", "route").put("route_id", routeId).put("date", date).put("run_id", runId ?: JSONObject.NULL))
     }
 
     suspend fun home(ctx: Context): Pair<JSONObject, Boolean> = cached(ctx, "home.json") {
         call(ctx, JSONObject().put("action", "home"))
     }
 
-    suspend fun trip(ctx: Context, tripId: String): Pair<JSONObject, Boolean> = cached(ctx, "trip_$tripId.json") {
-        call(ctx, JSONObject().put("action", "trip").put("trip_id", tripId))
+    suspend fun trip(ctx: Context, tripId: String, runId: String? = null): Pair<JSONObject, Boolean> = cached(ctx, "trip_$tripId.json") {
+        call(ctx, JSONObject().put("action", "trip").put("trip_id", tripId).put("run_id", runId ?: JSONObject.NULL))
     }
 
     suspend fun login(ctx: Context, code: String, pin: String): JSONObject =

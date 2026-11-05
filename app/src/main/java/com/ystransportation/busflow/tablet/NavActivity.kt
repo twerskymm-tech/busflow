@@ -390,7 +390,7 @@ class NavActivity : AppCompatActivity() {
         val date = intent.getStringExtra("date") ?: todayNY().toString()
         if (routeId == null) return try {
             // Extra trip (e.g. split bus): its own stops, each with its students
-            val (j, _) = Api.trip(this, tripId!!)
+            val (j, _) = Api.trip(this, tripId!!, runId)
             val p = Plan.from(j)
             j.optJSONArray("stops")?.let { a ->
                 for (i in 0 until a.length()) {
@@ -409,7 +409,7 @@ class NavActivity : AppCompatActivity() {
             false
         }
         return try {
-            val (j, _) = Api.route(this, routeId, date)
+            val (j, _) = Api.route(this, routeId, date, runId)
             var p = Plan.from(j)
             // Same stops as his My Day (a closed school's stops are already taken off there)
             val mine = stopsByRoute.optJSONArray(routeId)
@@ -452,6 +452,13 @@ class NavActivity : AppCompatActivity() {
                 progressIdx = startIdx
             }
             setupStops()
+            if (resumeAt > 0) {
+                // Pick up right after the last stop done before
+                applyResume()
+                progressIdx = max(progressIdx, stops[resumeAt - 1].pathIdx)
+                startIdx = progressIdx
+                updatePanel(null)
+            }
             drawPlan()
             if (!buildMatchedSegments(startIdx)) return
         } else {
@@ -463,8 +470,16 @@ class NavActivity : AppCompatActivity() {
                 status("Waiting for GPS…", Color.parseColor("#334155"), Color.parseColor("#E2E8F0"))
                 withTimeoutOrNull(30000) { firstLocation.await() } ?: run { fail("No GPS signal. Go outside or near a window and try again."); return }
             }
-            if (!buildStopSegments(origin)) return
-            setupStops()
+            if (resumeAt >= plan.stops.size) {
+                // Every stop was done already: show it finished
+                path = plan.stops.map { stopTarget(it) }.let { if (it.size > 1) it else it + it }
+                cum = Geo.cumulative(path)
+                setupStops(plan.stops.size); applyResume(); drawPlan(); drawStops()
+                onFinished(); return
+            }
+            if (!buildStopSegments(origin, resumeAt)) return
+            setupStops(resumeAt)
+            applyResume()
             drawPlan()
         }
         // Practice: the tablet "drives" the planned path by itself
@@ -479,7 +494,9 @@ class NavActivity : AppCompatActivity() {
             startSegment(0)
         }
         val first = stops.getOrNull(nextStop)
-        say(if (first != null) "Starting ${spoken(plan.code)}. First stop: ${first.stop.shortName}." else "Starting ${spoken(plan.code)}.")
+        val verb = if (resumeAt > 0) "Continuing" else "Starting"
+        say(if (first != null) "$verb ${spoken(plan.code)}. ${if (resumeAt > 0) "Next" else "First"} stop: ${first.stop.shortName}." else "$verb ${spoken(plan.code)}.")
+        if (resumeAt > 0) drawStops()
     }
 
     private fun fail(msg: String) {
@@ -684,8 +701,8 @@ class NavActivity : AppCompatActivity() {
     }
 
     /** No approved path: plain directions yard/here → stop 1 → stop 2 … (25 points per request). */
-    private suspend fun buildStopSegments(origin: Point): Boolean {
-        val pts = listOf(origin) + plan.stops.map { stopTarget(it) }
+    private suspend fun buildStopSegments(origin: Point, fromStop: Int = 0): Boolean {
+        val pts = listOf(origin) + plan.stops.drop(fromStop).map { stopTarget(it) }
         val all = ArrayList<Point>()
         val ranges = mutableListOf<Pair<Int, NavigationRoute>>()
         var i = 0
@@ -713,14 +730,40 @@ class NavActivity : AppCompatActivity() {
     private fun stopTarget(s: Stop): Point =
         if (s.curbLat != null && s.curbLng != null) Point.fromLngLat(s.curbLng, s.curbLat) else Point.fromLngLat(s.lng, s.lat)
 
-    private fun setupStops() {
+    // ── Continue where the route stopped (signed out, another tablet, or opened again after End) ──
+    private class Done(val status: Int, val at: String?, val byDriver: Boolean)
+    private val doneBefore: Map<String, Done> by lazy {
+        val m = HashMap<String, Done>()
+        val a = plan.json.optJSONObject("progress")?.optJSONArray("stops")
+        if (a != null) for (i in 0 until a.length()) {
+            val x = a.getJSONObject(i)
+            m[x.optString("id")] = Done(if (x.optString("status") == "done") 1 else 2, x.optString("at").takeIf { it.isNotEmpty() && it != "null" }, x.optBoolean("by_driver"))
+        }
+        m
+    }
+    /** Index of the first stop after the last one done/skipped before (0 = fresh start). */
+    private val resumeAt: Int by lazy { plan.stops.indexOfLast { doneBefore.containsKey(it.id) } + 1 }
+
+    private fun applyResume() {
+        val k = resumeAt
+        if (k <= 0) return
+        for (i in stops.indices) {
+            val d = doneBefore[stops[i].stop.id]
+            if (i < k) { stops[i].status = d?.status ?: 2; stops[i].at = d?.at; stops[i].byDriver = d?.byDriver ?: false }
+            else stops[i].status = 0
+        }
+        nextStop = k
+    }
+
+    private fun setupStops(skipBefore: Int = 0) {
         stops.clear()
         var from = 0
-        plan.stops.forEach { s ->
+        plan.stops.forEachIndexed { i, s ->
             val t = stopTarget(s)
             val st = StopState(s, t)
-            st.pathIdx = Geo.firstNear(path, t, from)
-            from = st.pathIdx
+            // Stops already done (directions mode: not on the new path) don't move the search along
+            st.pathIdx = if (i < skipBefore) 0 else Geo.firstNear(path, t, from)
+            if (i >= skipBefore) from = st.pathIdx
             stops.add(st)
         }
         // Stops before where the bus starts don't count

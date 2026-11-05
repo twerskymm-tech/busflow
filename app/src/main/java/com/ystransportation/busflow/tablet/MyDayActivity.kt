@@ -30,6 +30,10 @@ class MyDayActivity : AppCompatActivity() {
         /** Extra trip (split bus, charter…): navigable when it has stops */
         val tripId: String? = j.optString("extra_trip_ref").takeIf { it.isNotEmpty() && it != "null" }
         val navigable: Boolean get() = routeId != null || tripId != null
+        val busId: String? = j.optString("bus_id").takeIf { it.isNotEmpty() && it != "null" }
+        /** How far it got today (from BusFlow, any tablet) */
+        val finished: Boolean = j.optJSONObject("progress")?.optBoolean("finished") ?: false
+        val stopsDone: Int = j.optJSONObject("progress")?.optInt("done") ?: 0
         val code: String = j.optString("route_code").ifEmpty { j.optString("route_label") }.ifEmpty { "Extra trip" }
         val bus: String? = j.optString("bus_fleet_number").takeIf { it.isNotEmpty() && it != "null" }
     }
@@ -50,6 +54,11 @@ class MyDayActivity : AppCompatActivity() {
     private var tabletBus: String? = null
     private var current: Shift? = null
     private var busy = false
+    /** Bus questions already answered on this sign-in: "date|shiftStart|bus" */
+    private val asked = HashSet<String>()
+
+    private fun isDone(r: RunInfo) = r.finished || Prefs.doneRuns(this).contains("$date|${r.id}")
+    private fun clockedIn(s: Shift): Boolean { val p = s.punch; return (p != null && p.isNull("clock_out_time")) || Prefs.localPunch(this) == s.start }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,6 +71,7 @@ class MyDayActivity : AppCompatActivity() {
         b.signOut.setOnClickListener { confirmSignOut() }
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.swipe.onSwiped = { onSwipe() }
+        b.runs.setOnItemClickListener { _, _, pos, _ -> current?.let { s -> s.runs.getOrNull(pos)?.let { onRunTap(s, it) } } }
     }
 
     override fun onResume() {
@@ -165,11 +175,10 @@ class MyDayActivity : AppCompatActivity() {
             }
             return
         }
-        val done = Prefs.doneRuns(this)
-        val next = s.runs.firstOrNull { it.navigable && !done.contains("$date|${it.id}") }
+        val next = s.runs.firstOrNull { it.navigable && !isDone(it) }
         b.shiftTitle.text = "${s.label.ifEmpty { "Today" }} · ${s.runs.size} route${if (s.runs.size == 1) "" else "s"}".uppercase()
         adapter.rows = s.runs.map { r ->
-            val isDone = done.contains("$date|${r.id}")
+            val isDone = isDone(r)
             Row(
                 line1 = r.code,
                 line2 = listOfNotNull(
@@ -177,19 +186,16 @@ class MyDayActivity : AppCompatActivity() {
                     fmtTime(r.j.optString("start_time")).ifEmpty { null }?.let { "first stop $it" },
                     r.bus?.let { "Bus $it" },
                     r.j.optString("closed_note").takeIf { it.isNotEmpty() && it != "null" },
+                    if (isDone && r.navigable) "tap to open again" else if (!isDone && r.stopsDone > 0) "${r.stopsDone} stops done — tap to continue" else null,
                 ).joinToString(" · "),
-                tag = when { isDone -> "Done"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
+                tag = when { isDone -> "Done"; !isDone && r.stopsDone > 0 -> "Started"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
                 tagColor = if (isDone) Color.parseColor("#64748B") else Color.parseColor("#047857"),
                 tagBg = if (isDone) Color.parseColor("#F1F5F9") else Color.parseColor("#D1FAE5"),
                 dim = isDone,
             )
         }
-        // On a different bus than his today
-        val otherBus = s.runs.mapNotNull { it.bus }.firstOrNull { tabletBus != null && it != tabletBus }
-        if (otherBus != null) {
-            b.warning.text = "Today you are on bus $otherBus — this tablet is in bus $tabletBus. The office will be told when you clock in."
-            b.warning.visibility = View.VISIBLE
-        }
+        // On a different bus (or no bus) than this tablet's: ask if he was told to take this one
+        if (!cached) askBus(s)
         val p = s.punch
         val clockedIn = (p != null && p.isNull("clock_out_time")) || local == s.start
         b.swipe.visibility = View.VISIBLE
@@ -241,7 +247,7 @@ class MyDayActivity : AppCompatActivity() {
                     Prefs.setLocalPunch(this@MyDayActivity, s.start)
                     toast("No signal — clock-in saved, it will be sent later")
                 }
-                val first = s.runs.firstOrNull { it.navigable && !Prefs.doneRuns(this@MyDayActivity).contains("$date|${it.id}") }
+                val first = s.runs.firstOrNull { it.navigable && !isDone(it) }
                 if (first != null) startRoute(s, first) else load()
             } finally {
                 busy = false
@@ -289,7 +295,7 @@ class MyDayActivity : AppCompatActivity() {
         var after = false
         for (r in s.runs) {
             if (r == run) { after = true; continue }
-            if (after && r.navigable) rest.put(JSONObject().put("run_id", r.id).put("route_id", r.routeId ?: "").put("trip_id", r.tripId ?: "").put("code", r.code))
+            if (after && r.navigable && !isDone(r)) rest.put(JSONObject().put("run_id", r.id).put("route_id", r.routeId ?: "").put("trip_id", r.tripId ?: "").put("code", r.code))
         }
         startActivity(
             Intent(this, NavActivity::class.java)
@@ -300,6 +306,76 @@ class MyDayActivity : AppCompatActivity() {
                 .putExtra("chain", rest.toString())
                 .putExtra("stops_by_route", (j.optJSONObject("stops_by_route") ?: JSONObject()).toString()),
         )
+    }
+
+    /** "Were you told to take this bus?" for his routes still to drive on another bus (or none yet). */
+    private fun askBus(s: Shift) {
+        val bus = tabletBus ?: return
+        val left = s.runs.filter { !isDone(it) && it.bus != bus }
+        if (left.isEmpty()) return
+        val key = "$date|${s.start}|$bus"
+        if (!asked.add(key)) {
+            // Said No: keep reminding him on the screen
+            val other = left.mapNotNull { it.bus }.distinct()
+            if (other.isNotEmpty()) { b.warning.text = "You are on bus ${other.joinToString(", ")} today — this tablet is in bus $bus."; b.warning.visibility = View.VISIBLE }
+            return
+        }
+        val others = left.mapNotNull { it.bus }.distinct()
+        val names = left.joinToString(", ") { it.code }
+        val msg = if (others.isEmpty()) "No bus is set yet for $names.\n\nAre you taking bus $bus?"
+            else "Today you are on bus ${others.joinToString(", ")} for $names.\n\nWere you told to take bus $bus instead?"
+        AlertDialog.Builder(this)
+            .setTitle("This is bus $bus")
+            .setMessage(msg)
+            .setCancelable(false)
+            .setPositiveButton("Yes, I'm taking bus $bus") { _, _ -> takeBus(left) }
+            .setNegativeButton("No") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setTitle(if (others.isEmpty()) "Call the office" else "Go to bus ${others.joinToString(", ")}")
+                    .setMessage(if (others.isEmpty()) "Ask the office which bus to take." else "Sign out here and sign in on the tablet of bus ${others.joinToString(", ")}.")
+                    .setPositiveButton("Sign out") { _, _ -> lifecycleScope.launch { signOut() } }
+                    .setNegativeButton("Stay", null)
+                    .show()
+                render(false)
+            }
+            .show()
+    }
+
+    private fun takeBus(runs: List<RunInfo>) {
+        busy = true
+        b.status.text = "Changing to bus $tabletBus…"
+        lifecycleScope.launch {
+            try {
+                val ids = JSONArray().apply { runs.forEach { put(it.id) } }
+                Api.call(this@MyDayActivity, JSONObject().put("action", "take_bus").put("run_ids", ids))
+                toast("Done — your routes are on bus $tabletBus now. The office was told.")
+            } catch (e: ApiError) {
+                toast(e.message ?: "Could not change the bus")
+            } finally {
+                busy = false
+                load()
+            }
+        }
+    }
+
+    /** Tap a route: start it, continue it, or open a finished one again (it continues where it stopped). */
+    private fun onRunTap(s: Shift, r: RunInfo) {
+        if (!r.navigable) { toast("This trip has no stops to navigate. Check with the office."); return }
+        if (!clockedIn(s)) { toast("Swipe to clock in first."); return }
+        val done = isDone(r)
+        AlertDialog.Builder(this)
+            .setTitle(if (done) "Open ${r.code} again?" else "Start ${r.code}?")
+            .setMessage(when {
+                done -> "It opens where you left off. Stops already done stay done."
+                r.stopsDone > 0 -> "${r.stopsDone} stops are already done. It continues from the next stop."
+                else -> null
+            })
+            .setPositiveButton(if (done) "Open" else "Start") { _, _ ->
+                Prefs.unmarkRunDone(this, date, r.id)
+                startRoute(s, r)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun queue(item: JSONObject) {
