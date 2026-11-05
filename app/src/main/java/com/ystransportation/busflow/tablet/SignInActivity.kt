@@ -28,6 +28,29 @@ class SignInActivity : AppCompatActivity() {
     private var onPin = false
     private var busy = false
 
+    private var refreshJob: kotlinx.coroutines.Job? = null
+
+    override fun onResume() {
+        super.onResume()
+        Owner.keepLocked(this)
+        if (!::b.isInitialized) return
+        // Nobody is driving now: a good time to update (and to see if the office unlocked the tablet)
+        Updater.autoCheck(this, lifecycleScope)
+        refreshJob?.cancel()
+        refreshJob = lifecycleScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(5 * 60000L)
+                load()
+                Updater.autoCheck(this@SignInActivity, lifecycleScope)
+            }
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        refreshJob?.cancel()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Someone is still signed in on this tablet: straight to his day
@@ -135,6 +158,10 @@ class SignInActivity : AppCompatActivity() {
                 Api.flushQueue(this@SignInActivity)
                 val (j, cached) = Api.home(this@SignInActivity)
                 val bus = j.optJSONObject("bus")
+                // Office unlocked this tablet for a few minutes (BusFlow → Tablets)
+                val until = j.optString("unlock_until").takeIf { it.isNotEmpty() && it != "null" }?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+                if (Owner.isOwner(this@SignInActivity) && !cached) { Owner.setUnlockedUntil(this@SignInActivity, until); Owner.keepLocked(this@SignInActivity) }
+                showUnlocked()
                 b.busTitle.text = if (bus != null) "Bus ${bus.optString("fleet_number")}" else j.optString("tablet").ifEmpty { Prefs.tabletName(this@SignInActivity) }
                 val warn = when {
                     cached -> "No signal right now. You need internet to sign in."
@@ -147,6 +174,14 @@ class SignInActivity : AppCompatActivity() {
                 if (e.unpaired) { Prefs.unpair(this@SignInActivity); startActivity(Intent(this@SignInActivity, PairActivity::class.java)); finish() }
             }
         }
+    }
+
+    private fun showUnlocked() {
+        if (!Owner.isOwner(this) || !Owner.isUnlocked(this)) { b.unlockBar.visibility = View.GONE; return }
+        val t = java.time.format.DateTimeFormatter.ofPattern("h:mm a").format(java.time.Instant.ofEpochMilli(Owner.unlockedUntil(this)).atZone(NY))
+        b.unlockText.text = "Unlocked for the office until $t"
+        b.unlockBar.visibility = View.VISIBLE
+        b.openSettings.setOnClickListener { runCatching { startActivity(Intent(android.provider.Settings.ACTION_SETTINGS)) } }
     }
 
     private fun openDay() {

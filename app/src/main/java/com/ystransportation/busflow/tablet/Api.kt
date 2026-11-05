@@ -75,6 +75,7 @@ object Api {
     /** POST a JSON body; returns the JSON answer or throws [ApiError]. */
     suspend fun call(ctx: Context, body: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         body.put("app_version", BuildConfig.VERSION_NAME)
+        body.put("owner_mode", Owner.isOwner(ctx))
         val conn = (URL(Prefs.baseUrl(ctx)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15000

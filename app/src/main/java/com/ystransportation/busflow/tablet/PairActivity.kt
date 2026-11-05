@@ -14,8 +14,14 @@ import kotlinx.coroutines.launch
 class PairActivity : AppCompatActivity() {
     private lateinit var b: ActivityPairBinding
 
+    override fun onResume() {
+        super.onResume()
+        Owner.keepLocked(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Owner.setup(this)
         if (Prefs.key(this) != null) { openRoutes(); return }
         b = ActivityPairBinding.inflate(layoutInflater)
         setContentView(b.root)

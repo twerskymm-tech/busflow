@@ -25,6 +25,11 @@ class RouteActivity : AppCompatActivity() {
     private var day = ""
     private var plan: Plan? = null
 
+    override fun onResume() {
+        super.onResume()
+        Owner.keepLocked(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         b = ActivityRouteBinding.inflate(layoutInflater)

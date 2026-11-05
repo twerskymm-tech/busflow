@@ -1,0 +1,19 @@
+name: Keep the signing key
+
+# The app's signing key lives in the Actions cache, which GitHub empties after 7 days unused.
+# Tablets only accept updates signed with the same key, so this touches it every few days.
+on:
+  schedule:
+    - cron: '17 6 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  touch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.busflow-signing
+          key: busflow-signing-v1
+          fail-on-cache-miss: true
+      - run: ls -la ~/.busflow-signing | wc -l

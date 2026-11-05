@@ -76,6 +76,7 @@ class MyDayActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        Owner.keepLocked(this)
         if (::b.isInitialized) load()
     }
 

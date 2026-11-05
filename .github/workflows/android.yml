@@ -67,6 +67,23 @@ jobs:
       - name: Name the file
         run: cp app/build/outputs/apk/release/app-release.apk busflow-tablet.apk
 
+      # Setup QR for a factory-reset tablet: installs BusFlow as the tablet's owner (updates itself, locked to BusFlow)
+      - name: Setup QR
+        run: |
+          SUM=$(keytool -exportcert -alias busflow -keystore "$BUSFLOW_KEYSTORE" -storepass "$BUSFLOW_KEYSTORE_PASSWORD" | openssl dgst -sha256 -binary | base64 | tr '+/' '-_' | tr -d '=')
+          cat > provision.json <<JSON
+          {
+            "android.app.extra.PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME": "com.ystransportation.busflow.tablet/com.ystransportation.busflow.tablet.AdminReceiver",
+            "android.app.extra.PROVISIONING_DEVICE_ADMIN_PACKAGE_DOWNLOAD_LOCATION": "https://github.com/${{ github.repository }}/releases/download/tablet-latest/busflow-tablet.apk",
+            "android.app.extra.PROVISIONING_DEVICE_ADMIN_SIGNATURE_CHECKSUM": "$SUM",
+            "android.app.extra.PROVISIONING_LEAVE_ALL_SYSTEM_APPS_ENABLED": true,
+            "android.app.extra.PROVISIONING_SKIP_ENCRYPTION": true
+          }
+          JSON
+          python3 -m json.tool provision.json > /dev/null
+          pip install --quiet "qrcode[pil]"
+          python3 -c "import qrcode,json; qrcode.make(json.dumps(json.load(open('provision.json')),separators=(',',':')), box_size=8, border=4).save('tablet-setup-qr.png')"
+
       - uses: actions/upload-artifact@v5
         with:
           name: busflow-tablet
@@ -79,7 +96,7 @@ jobs:
         run: |
           VERSION="0.4.${{ github.run_number }}"
           gh release delete tablet-latest --yes --cleanup-tag || true
-          gh release create tablet-latest busflow-tablet.apk \
+          gh release create tablet-latest busflow-tablet.apk tablet-setup-qr.png provision.json \
             --title "BusFlow Tablet $VERSION" \
             --notes "Install on the tablet: open https://github.com/${{ github.repository }}/releases/latest/download/busflow-tablet.apk" \
             --latest

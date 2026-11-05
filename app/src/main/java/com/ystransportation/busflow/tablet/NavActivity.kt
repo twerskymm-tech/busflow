@@ -274,6 +274,11 @@ class NavActivity : AppCompatActivity() {
 
     // ── Screen setup ────────────────────────────────────────────────────────────
 
+    override fun onResume() {
+        super.onResume()
+        Owner.keepLocked(this)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
