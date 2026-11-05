@@ -38,10 +38,18 @@ class SignInActivity : AppCompatActivity() {
         Updater.autoCheck(this, lifecycleScope)
         refreshJob?.cancel()
         refreshJob = lifecycleScope.launch {
+            var n = 0
             while (true) {
-                kotlinx.coroutines.delay(5 * 60000L)
-                load()
-                Updater.autoCheck(this@SignInActivity, lifecycleScope)
+                kotlinx.coroutines.delay(15000L)
+                n++
+                // Every 15 s: unlocked by the office? (locked tablets only). Every 5 min: bus, warnings, updates.
+                if (Owner.isOwner(this@SignInActivity)) {
+                    try {
+                        Owner.applyUnlock(this@SignInActivity, Api.call(this@SignInActivity, org.json.JSONObject().put("action", "status")))
+                        showUnlocked()
+                    } catch (e: ApiError) { /* next time */ }
+                } else if (Owner.isUnlocked(this@SignInActivity)) showUnlocked()
+                if (n % 20 == 0) { load(); Updater.autoCheck(this@SignInActivity, lifecycleScope) }
             }
         }
     }
@@ -161,6 +169,7 @@ class SignInActivity : AppCompatActivity() {
                 // Office unlocked this tablet for a few minutes (BusFlow → Tablets)
                 val until = j.optString("unlock_until").takeIf { it.isNotEmpty() && it != "null" }?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
                 if (Owner.isOwner(this@SignInActivity) && !cached) { Owner.setUnlockedUntil(this@SignInActivity, until); Owner.keepLocked(this@SignInActivity) }
+                if (until == 0L && !cached) Owner.keepLocked(this@SignInActivity)
                 showUnlocked()
                 b.busTitle.text = if (bus != null) "Bus ${bus.optString("fleet_number")}" else j.optString("tablet").ifEmpty { Prefs.tabletName(this@SignInActivity) }
                 val warn = when {

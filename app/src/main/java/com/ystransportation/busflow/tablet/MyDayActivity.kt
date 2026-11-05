@@ -116,6 +116,7 @@ class MyDayActivity : AppCompatActivity() {
                         .put("speed_mph", if (loc.hasSpeed()) loc.speed * 2.237 else JSONObject.NULL)
                         .put("state", "between_routes").put("pos_id", posId ?: JSONObject.NULL))
                     posId = j.optString("pos_id").ifEmpty { posId }
+                    Owner.applyUnlock(this@MyDayActivity, j)
                     lastSent = loc.time
                 } catch (e: ApiError) { /* try again in 5 s */ }
             }

@@ -59,6 +59,16 @@ object Owner {
     fun setUnlockedUntil(ctx: Context, ms: Long) { prefs(ctx).edit().putLong("unlock_until", ms).apply() }
     fun isUnlocked(ctx: Context) = System.currentTimeMillis() < unlockedUntil(ctx)
 
+    /** From a BusFlow answer that carries unlock_until (status / home / pos). */
+    fun applyUnlock(activity: Activity, j: org.json.JSONObject) {
+        if (!isOwner(activity) || !j.has("unlock_until")) return
+        val until = j.optString("unlock_until").takeIf { it.isNotEmpty() && it != "null" }
+            ?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() } ?: 0L
+        if (until == unlockedUntil(activity) && isUnlocked(activity) == (until > System.currentTimeMillis())) { keepLocked(activity); return }
+        setUnlockedUntil(activity, until)
+        keepLocked(activity)
+    }
+
     /** Call from every screen's onResume. */
     fun keepLocked(activity: Activity) {
         if (!isOwner(activity)) return

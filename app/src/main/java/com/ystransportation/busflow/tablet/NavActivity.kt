@@ -888,6 +888,7 @@ class NavActivity : AppCompatActivity() {
                 .put("state", trackState()).put("run_id", runId).put("route_code", plan.code)
                 .put("pos_id", posId ?: org.json.JSONObject.NULL))
             posId = j.optString("pos_id").ifEmpty { posId }
+            Owner.applyUnlock(this, j)
             lastPosSent = loc.timestamp
         } catch (e: ApiError) {
             // No signal: the next one goes when it's back (the trip log keeps every point)
