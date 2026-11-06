@@ -25,6 +25,9 @@ class PairActivity : AppCompatActivity() {
         if (Prefs.key(this) != null) { openRoutes(); return }
         b = ActivityPairBinding.inflate(layoutInflater)
         setContentView(b.root)
+        // Locked tablet: its own Wi-Fi settings are blocked, so pick Wi-Fi here
+        b.wifi.visibility = if (Owner.isOwner(this)) android.view.View.VISIBLE else android.view.View.GONE
+        b.wifi.setOnClickListener { WifiPicker.show(this) }
 
         // Typing "abcdefgh" shows as "ABCD-EFGH"
         b.code.addTextChangedListener(object : TextWatcher {

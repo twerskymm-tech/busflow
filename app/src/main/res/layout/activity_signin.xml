@@ -187,6 +187,16 @@
             android:textColor="@color/muted" />
 
         <com.google.android.material.button.MaterialButton
+            android:id="@+id/wifi"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Wi-Fi"
+            android:textAllCaps="false"
+            android:textColor="@color/brand"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/updateApp"
             style="@style/Widget.MaterialComponents.Button.TextButton"
             android:layout_width="wrap_content"

@@ -69,6 +69,9 @@ class SignInActivity : AppCompatActivity() {
         runCatching { java.io.File(filesDir, "home.json").delete() }
         b.practice.setOnClickListener { startActivity(Intent(this, RoutesActivity::class.java)) }
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
+        // Locked tablet: its own Wi-Fi settings are blocked, so pick Wi-Fi here
+        b.wifi.visibility = if (Owner.isOwner(this)) android.view.View.VISIBLE else android.view.View.GONE
+        b.wifi.setOnClickListener { WifiPicker.show(this) }
         b.titleBox.setOnLongClickListener { startActivity(Intent(this, RoutesActivity::class.java)); true }
         b.codeBox.setOnClickListener { onPin = false; render() }
         b.pinBox.visibility = View.GONE
@@ -168,7 +171,7 @@ class SignInActivity : AppCompatActivity() {
                 showUnlocked()
                 b.busTitle.text = if (bus != null) "Bus ${bus.optString("fleet_number")}" else j.optString("tablet").ifEmpty { Prefs.tabletName(this@SignInActivity) }
                 val warn = when {
-                    cached -> "No signal right now. You need internet to sign in."
+                    cached -> if (Owner.isOwner(this@SignInActivity)) "No internet. Tap Wi-Fi at the bottom to connect." else "No signal right now. You need internet to sign in."
                     bus == null -> "This tablet isn't set to a bus yet. In BusFlow: Route Paths → Tablets → pick the bus."
                     else -> null
                 }
