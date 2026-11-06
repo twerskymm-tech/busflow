@@ -38,15 +38,29 @@
                 android:textSize="15sp" />
         </LinearLayout>
 
-        <com.google.android.material.button.MaterialButton
+
+        <ImageButton
+            android:id="@+id/wifi"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/icon_btn_bg"
+            android:contentDescription="Wi-Fi"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_wifi"
+            android:tint="#E2ECF3"
+            android:visibility="gone" />
+
+        <ImageButton
             android:id="@+id/updateApp"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Update app"
-            android:textAllCaps="false"
-            android:textColor="#CBD5E1"
-            android:textSize="14sp" />
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/icon_btn_bg"
+            android:contentDescription="Update app"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_update"
+            android:tint="#E2ECF3" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/signOut"

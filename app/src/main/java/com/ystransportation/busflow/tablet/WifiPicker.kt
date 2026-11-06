@@ -32,28 +32,77 @@ object WifiPicker {
         activity.window.decorView.postDelayed({ if (!done) { done = true; runCatching { activity.unregisterReceiver(rx) }; wait.dismiss(); list(activity, wm) } }, 6000)
     }
 
+    private class Net(val ssid: String, val level: Int, val caps: String, val connected: Boolean) {
+        val open get() = !(caps.contains("WPA") || caps.contains("WEP") || caps.contains("SAE"))
+        /** 0..4 bars */
+        val bars get() = when { level > -55 -> 4; level > -65 -> 3; level > -75 -> 2; level > -85 -> 1; else -> 0 }
+    }
+
+    private fun dp(a: Activity, v: Int) = (v * a.resources.displayMetrics.density).toInt()
+
+    /** Wi-Fi wedge filled from the bottom by signal strength (like the phone's own icon). */
+    private fun signalIcon(a: Activity, bars: Int): android.graphics.drawable.Drawable {
+        val bg = androidx.core.content.ContextCompat.getDrawable(a, R.drawable.ic_wedge)!!.mutate().apply { setTint(androidx.core.content.ContextCompat.getColor(a, R.color.line)) }
+        val fg = androidx.core.content.ContextCompat.getDrawable(a, R.drawable.ic_wedge)!!.mutate().apply { setTint(androidx.core.content.ContextCompat.getColor(a, R.color.brand)) }
+        val clip = android.graphics.drawable.ClipDrawable(fg, android.view.Gravity.BOTTOM, android.graphics.drawable.ClipDrawable.VERTICAL)
+        clip.level = listOf(1500, 3800, 5800, 7800, 10000)[bars.coerceIn(0, 4)]
+        return android.graphics.drawable.LayerDrawable(arrayOf(bg, clip))
+    }
+
+    private fun row(a: Activity, n: Net): android.view.View {
+        val ink = androidx.core.content.ContextCompat.getColor(a, R.color.ink)
+        val muted = androidx.core.content.ContextCompat.getColor(a, R.color.muted)
+        return android.widget.LinearLayout(a).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(dp(a, 20), dp(a, 12), dp(a, 20), dp(a, 12))
+            addView(android.widget.ImageView(a).apply { setImageDrawable(signalIcon(a, n.bars)) }, android.widget.LinearLayout.LayoutParams(dp(a, 28), dp(a, 28)))
+            addView(android.widget.LinearLayout(a).apply {
+                orientation = android.widget.LinearLayout.VERTICAL
+                setPadding(dp(a, 16), 0, dp(a, 8), 0)
+                addView(android.widget.TextView(a).apply {
+                    text = n.ssid; textSize = 17f; setTextColor(ink)
+                    if (n.connected) setTypeface(typeface, android.graphics.Typeface.BOLD)
+                    maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                })
+                addView(android.widget.TextView(a).apply {
+                    text = when { n.connected -> "Connected"; n.open -> "Open network"; else -> "Needs a password" }
+                    textSize = 13f
+                    setTextColor(if (n.connected) androidx.core.content.ContextCompat.getColor(a, R.color.ok) else muted)
+                })
+            }, android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            if (!n.open) addView(android.widget.ImageView(a).apply {
+                setImageResource(R.drawable.ic_lock); setColorFilter(muted)
+            }, android.widget.LinearLayout.LayoutParams(dp(a, 18), dp(a, 18)))
+        }
+    }
+
     private fun list(activity: Activity, wm: WifiManager) {
-        val nets = runCatching { wm.scanResults }.getOrDefault(emptyList())
-            .filter { it.SSID.isNotBlank() }
-            .groupBy { it.SSID }.map { (_, v) -> v.maxBy { it.level } }
-            .sortedByDescending { it.level }
         val current = runCatching { wm.connectionInfo?.ssid?.trim('"') }.getOrNull()
+        val nets = runCatching { wm.scanResults }.getOrDefault(emptyList())
+            .filter { it.SSID.isNotBlank() && !it.SSID.startsWith("DIRECT-") }   // printers / TVs, not internet
+            .groupBy { it.SSID }.map { (_, v) -> v.maxBy { it.level } }
+            .map { Net(it.SSID, it.level, it.capabilities, it.SSID == current) }
+            .sortedWith(compareByDescending<Net> { it.connected }.thenByDescending { it.level })
+            .take(25)
         if (nets.isEmpty()) {
             AlertDialog.Builder(activity).setTitle("Wi-Fi").setMessage("No networks found. Move closer to the Wi-Fi and try again.")
                 .setPositiveButton("Try again") { _, _ -> show(activity) }.setNegativeButton("Close", null).show()
             return
         }
-        val labels = nets.map { n ->
-            val open = !(n.capabilities.contains("WPA") || n.capabilities.contains("WEP") || n.capabilities.contains("SAE"))
-            val bars = when { n.level > -60 -> "▂▄▆█"; n.level > -70 -> "▂▄▆"; n.level > -80 -> "▂▄"; else -> "▂" }
-            "${n.SSID}${if (n.SSID == current) "  ✓ connected" else ""}${if (open) "  (open)" else ""}   $bars"
-        }.toTypedArray()
-        AlertDialog.Builder(activity).setTitle("Pick the Wi-Fi")
-            .setItems(labels) { _, i ->
+        val adapter = object : android.widget.BaseAdapter() {
+            override fun getCount() = nets.size
+            override fun getItem(i: Int) = nets[i]
+            override fun getItemId(i: Int) = i.toLong()
+            override fun getView(i: Int, convert: android.view.View?, parent: android.view.ViewGroup?) = row(activity, nets[i])
+        }
+        AlertDialog.Builder(activity).setTitle("Wi-Fi")
+            .setAdapter(adapter) { _, i ->
                 val n = nets[i]
-                val open = !(n.capabilities.contains("WPA") || n.capabilities.contains("WEP") || n.capabilities.contains("SAE"))
-                if (open) connect(activity, wm, n.SSID, null, n.capabilities) else askPassword(activity, wm, n.SSID, n.capabilities)
+                if (n.connected) return@setAdapter
+                if (n.open) connect(activity, wm, n.ssid, null, n.caps) else askPassword(activity, wm, n.ssid, n.caps)
             }
+            .setNeutralButton("Refresh") { _, _ -> show(activity) }
             .setNegativeButton("Close", null).show()
     }
 

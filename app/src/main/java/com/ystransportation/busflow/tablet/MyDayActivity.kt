@@ -80,6 +80,8 @@ class MyDayActivity : AppCompatActivity() {
         b.hello.text = "Hi, ${Prefs.driverName(this).substringBefore(" ")}"
         b.signOut.setOnClickListener { confirmSignOut() }
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
+        b.wifi.visibility = if (Owner.isOwner(this)) android.view.View.VISIBLE else android.view.View.GONE
+        b.wifi.setOnClickListener { WifiPicker.show(this) }
         b.swipe.onSwiped = { onSwipe() }
         b.runs.setOnItemClickListener { _, _, pos, _ -> shown.getOrNull(pos)?.let { (s, r) -> onRunTap(s, r) } }
     }

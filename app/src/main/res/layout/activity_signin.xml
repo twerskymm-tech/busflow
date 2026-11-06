@@ -5,14 +5,22 @@
     android:orientation="vertical">
 
     <LinearLayout
-        android:id="@+id/titleBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:background="@color/header"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingEnd="8dp">
+
+    <LinearLayout
+        android:id="@+id/titleBox"
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:orientation="vertical"
         android:paddingStart="20dp"
         android:paddingTop="16dp"
-        android:paddingEnd="20dp"
+        android:paddingEnd="8dp"
         android:paddingBottom="16dp">
 
         <TextView
@@ -31,6 +39,29 @@
             android:text="Type your driver code"
             android:textColor="#CBD5E1"
             android:textSize="16sp" />
+    </LinearLayout>
+        <ImageButton
+            android:id="@+id/wifi"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/icon_btn_bg"
+            android:contentDescription="Wi-Fi"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_wifi"
+            android:tint="#E2ECF3"
+            android:visibility="gone" />
+
+        <ImageButton
+            android:id="@+id/updateApp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/icon_btn_bg"
+            android:contentDescription="Update app"
+            android:padding="12dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_update"
+            android:tint="#E2ECF3" />
     </LinearLayout>
 
     <TextView
@@ -186,23 +217,6 @@
             android:textAllCaps="false"
             android:textColor="@color/muted" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/wifi"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Wi-Fi"
-            android:textAllCaps="false"
-            android:textColor="@color/brand"
-            android:visibility="gone" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/updateApp"
-            style="@style/Widget.MaterialComponents.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Update app"
-            android:textAllCaps="false"
-            android:textColor="@color/brand" />
     </LinearLayout>
 </LinearLayout>

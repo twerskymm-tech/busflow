@@ -171,7 +171,7 @@ class SignInActivity : AppCompatActivity() {
                 showUnlocked()
                 b.busTitle.text = if (bus != null) "Bus ${bus.optString("fleet_number")}" else j.optString("tablet").ifEmpty { Prefs.tabletName(this@SignInActivity) }
                 val warn = when {
-                    cached -> if (Owner.isOwner(this@SignInActivity)) "No internet. Tap Wi-Fi at the bottom to connect." else "No signal right now. You need internet to sign in."
+                    cached -> if (Owner.isOwner(this@SignInActivity)) "No internet. Tap the Wi-Fi icon at the top to connect." else "No signal right now. You need internet to sign in."
                     bus == null -> "This tablet isn't set to a bus yet. In BusFlow: Route Paths → Tablets → pick the bus."
                     else -> null
                 }
