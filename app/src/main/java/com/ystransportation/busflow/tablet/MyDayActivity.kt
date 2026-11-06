@@ -37,6 +37,13 @@ class MyDayActivity : AppCompatActivity() {
         val paused: Boolean = j.optJSONObject("progress")?.optBoolean("paused") ?: false
         val code: String = j.optString("route_code").ifEmpty { j.optString("route_label") }.ifEmpty { "Extra trip" }
         val bus: String? = j.optString("bus_fleet_number").takeIf { it.isNotEmpty() && it != "null" }
+        /** Already over (end time passed today) — e.g. this morning's route */
+        fun over(date: String): Boolean {
+            val t = j.optString("outer_end_time").takeIf { it.isNotEmpty() && it != "null" } ?: j.optString("end_time")
+            val m = Regex("^(\\d{1,2}):(\\d{2})").find(t) ?: return false
+            val d = runCatching { java.time.LocalDate.parse(date) }.getOrNull() ?: return false
+            return d.atTime(m.groupValues[1].toInt(), m.groupValues[2].toInt()).atZone(NY).toInstant().toEpochMilli() < System.currentTimeMillis()
+        }
     }
 
     private class Shift(val j: JSONObject) {
@@ -54,6 +61,8 @@ class MyDayActivity : AppCompatActivity() {
     private var date = ""
     private var tabletBus: String? = null
     private var current: Shift? = null
+    /** Rows on screen: this shift's routes, then the rest of today's */
+    private var shown: List<Pair<Shift, RunInfo>> = emptyList()
     private var busy = false
     /** Bus questions already answered on this sign-in: "date|shiftStart|bus" */
     private val asked = HashSet<String>()
@@ -72,7 +81,7 @@ class MyDayActivity : AppCompatActivity() {
         b.signOut.setOnClickListener { confirmSignOut() }
         b.updateApp.setOnClickListener { Updater.run(this, lifecycleScope) }
         b.swipe.onSwiped = { onSwipe() }
-        b.runs.setOnItemClickListener { _, _, pos, _ -> current?.let { s -> s.runs.getOrNull(pos)?.let { onRunTap(s, it) } } }
+        b.runs.setOnItemClickListener { _, _, pos, _ -> shown.getOrNull(pos)?.let { (s, r) -> onRunTap(s, r) } }
     }
 
     override fun onResume() {
@@ -179,8 +188,12 @@ class MyDayActivity : AppCompatActivity() {
             return
         }
         val next = s.runs.firstOrNull { it.navigable && !isDone(it) }
-        b.shiftTitle.text = "${s.label.ifEmpty { "Today" }} · ${s.runs.size} route${if (s.runs.size == 1) "" else "s"}".uppercase()
-        adapter.rows = s.runs.map { r ->
+        val later = shifts.dropWhile { it !== s }.drop(1)
+        shown = s.runs.map { s to it } + later.flatMap { sh -> sh.runs.map { sh to it } }
+        val total = shown.size
+        b.shiftTitle.text = "${s.label.ifEmpty { "Today" }} · $total route${if (total == 1) "" else "s"}".uppercase()
+        adapter.rows = shown.map { (sh, r) ->
+            val laterShift = sh !== s
             val isDone = isDone(r)
             Row(
                 line1 = r.code,
@@ -191,16 +204,22 @@ class MyDayActivity : AppCompatActivity() {
                     r.j.optString("closed_note").takeIf { it.isNotEmpty() && it != "null" },
                     if (isDone && r.navigable) "tap to open again" else if (!isDone && (r.paused || r.stopsDone > 0)) "${r.stopsDone} stops done — tap to continue" else null,
                 ).joinToString(" · "),
-                tag = when { isDone -> "Done"; r.paused -> "Paused"; r.stopsDone > 0 -> "Started"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
+                tag = when { isDone -> "Done"; laterShift -> "Later"; r.paused -> "Paused"; r.stopsDone > 0 -> "Started"; r == next -> "Next"; r.routeId == null && r.tripId == null -> "Extra trip"; r.routeId == null -> "Trip"; else -> null },
                 tagColor = if (isDone) Color.parseColor("#64748B") else Color.parseColor("#047857"),
                 tagBg = if (isDone) Color.parseColor("#F1F5F9") else Color.parseColor("#D1FAE5"),
                 dim = isDone,
             )
         }
-        // On a different bus (or no bus) than this tablet's: ask if he was told to take this one
-        if (!cached) askBus(s)
         val p = s.punch
         val clockedIn = (p != null && p.isNull("clock_out_time")) || local == s.start
+        // Still clocked in from an earlier shift that is over (forgot to clock out): his next route is waiting
+        val stale = clockedIn && later.isNotEmpty() && s.endMs > 0 && s.endMs + 30 * 60000 < now && s.runs.all { isDone(it) || it.over(date) }
+        if (stale) {
+            b.warning.text = "You are still clocked in from ${s.label.ifEmpty { "your earlier routes" }} (ended ${fmtMs(s.endMs)}). Swipe to clock out — then ${later.first().runs.firstOrNull()?.code ?: "your next route"} comes up."
+            b.warning.visibility = View.VISIBLE
+        }
+        // On a different bus (or no bus) than this tablet's: ask if he was told to take this one
+        if (!cached && !stale) askBus(s)
         b.swipe.visibility = View.VISIBLE
         b.swipe.isEnabled = !busy
         if (!clockedIn) {
@@ -314,7 +333,7 @@ class MyDayActivity : AppCompatActivity() {
     /** "Were you told to take this bus?" for his routes still to drive on another bus (or none yet). */
     private fun askBus(s: Shift) {
         val bus = tabletBus ?: return
-        val left = s.runs.filter { !isDone(it) && it.bus != bus }
+        val left = s.runs.filter { !isDone(it) && !it.over(date) && it.bus != bus }
         if (left.isEmpty()) return
         val key = "$date|${s.start}|$bus"
         if (!asked.add(key)) {
@@ -364,6 +383,7 @@ class MyDayActivity : AppCompatActivity() {
     /** Tap a route: start it, continue it, or open a finished one again (it continues where it stopped). */
     private fun onRunTap(s: Shift, r: RunInfo) {
         if (!r.navigable) { toast("This trip has no stops to navigate. Check with the office."); return }
+        if (s !== current) { toast("${r.code} is later today. It comes up after you clock out of this shift and clock in for it."); return }
         if (!clockedIn(s)) { toast("Swipe to clock in first."); return }
         val done = isDone(r)
         AlertDialog.Builder(this)
